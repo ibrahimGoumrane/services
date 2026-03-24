@@ -1,0 +1,10 @@
+*env
+uploads/
+postman/
+*logs
+*__pycache__/
+node_modules/
+dist/
+*.log
+*.csv
+docs/

@@ -1,0 +1,144 @@
+import asyncio
+import csv
+import json
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+
+from api.models import CreateJobResponse, JobStatusResponse, SeedDatabaseRequest
+from api.services.utils.job_manager import job_store
+from api.services.utils.seeding_runner import run_seed_job
+from api.services.utils.ws_manager import ws_manager
+
+router = APIRouter(tags=["jobs"])
+
+UPLOADS_DIR = Path(__file__).resolve().parents[2] / "uploads"
+
+
+def _parse_json_field(field_name: str, value: str | None, default: dict | None = None) -> dict | None:
+    if value is None:
+        return default
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{field_name} must be valid JSON",
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"{field_name} must be a JSON object",
+        )
+    return parsed
+
+
+async def _save_upload(file: UploadFile) -> Path:
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename).suffix or ".csv"
+    dest = UPLOADS_DIR / f"{uuid4()}{suffix}"
+    dest.write_bytes(await file.read())
+    await file.close()
+    return dest
+
+
+@router.post("/jobs", response_model=CreateJobResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_job(
+    csv_file: UploadFile = File(...),
+    csv_mapping: str = Form(...),
+    csv_separator: str = Form(","),
+    batch_size: int = Form(100),
+    enable_web_scraping: bool = Form(True),
+    skip_google_search: bool = Form(False),
+    default_values: str | None = Form(None),
+) -> CreateJobResponse:
+    if not csv_file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="csv_file must include a filename",
+        )
+
+    saved_path = await _save_upload(csv_file)
+
+    job_payload = SeedDatabaseRequest(
+        csv_mapping=_parse_json_field("csv_mapping", csv_mapping) or {},
+        csv_separator=csv_separator,
+        batch_size=batch_size,
+        enable_web_scraping=enable_web_scraping,
+        skip_google_search=skip_google_search,
+        default_values=_parse_json_field("default_values", default_values),
+    ).model_dump()
+    job_payload["csv_file_path"] = str(saved_path)
+
+    job = job_store.create_job(job_payload)
+    await ws_manager.send_event(job.job_id, "queued", job.to_dict())
+    asyncio.create_task(run_seed_job(job.job_id))
+
+    return CreateJobResponse(job_id=job.job_id, status=job.status)
+
+
+@router.get("/jobs", response_model=list[JobStatusResponse])
+async def list_jobs() -> list[JobStatusResponse]:
+    jobs = job_store.list_jobs()
+    return [JobStatusResponse(**job.to_dict()) for job in jobs]
+
+
+@router.post("/jobs/csv/headers")
+async def preview_csv_headers(
+    csv_file: UploadFile = File(...),
+    csv_separator: str = Form(","),
+) -> dict[str, list[str]]:
+    if not csv_file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="csv_file must include a filename",
+        )
+
+    raw_bytes = await csv_file.read()
+    await csv_file.close()
+    if not raw_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="csv_file is empty",
+        )
+
+    try:
+        content = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="csv_file must be UTF-8 encoded",
+        ) from exc
+
+    lines = content.splitlines()
+    if not lines:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="csv_file does not contain headers",
+        )
+
+    try:
+        parsed_headers = next(csv.reader([lines[0]], delimiter=csv_separator))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Failed to parse headers with provided csv_separator",
+        ) from exc
+
+    headers = [str(header).strip() for header in parsed_headers]
+    if not any(headers):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="csv_file headers are empty",
+        )
+
+    return {"headers": headers}
+
+
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job(job_id: str) -> JobStatusResponse:
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return JobStatusResponse(**job.to_dict())

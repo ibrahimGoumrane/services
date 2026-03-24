@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-multipart
+dnspython
+mysql-connector-python
+pandas
+tldextract
+numpy
+requests
+beautifulsoup4
+nodriver
+mysqlx
+python-dotenv
