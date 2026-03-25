@@ -17,7 +17,7 @@ if (-not (Test-Path $apiPython)) {
     throw "Backend Python not found at $apiPython. Create the venv first: python -m venv api\\env"
 }
 
-$backendCommand = "Set-Location '$apiPath'; & '$apiPython' -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000"
+$backendCommand = "Set-Location '$rootPath'; & '$apiPython' -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000"
 $frontendCommand = "Set-Location '$frontendPath'; npm run dev"
 
 Write-Host "Launching backend window on http://127.0.0.1:8000" -ForegroundColor Green

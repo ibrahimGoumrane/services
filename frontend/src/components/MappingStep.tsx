@@ -1,4 +1,4 @@
-import React, { useEffect, useState, Children } from "react";
+import { useEffect, useState } from "react";
 import { ChevronLeft, Play, Settings2, CheckCircle2 } from "lucide-react";
 import { JobSettings } from "../lib/types";
 import { motion } from "framer-motion";
@@ -16,13 +16,13 @@ const REQUIRED_FIELDS = [
     id: "company",
     label: "Company Name",
   },
+];
+
+const OPTIONAL_FIELDS = [
   {
     id: "url",
     label: "Website URL",
   },
-];
-
-const OPTIONAL_FIELDS = [
   {
     id: "fname",
     label: "First Name",
@@ -236,6 +236,10 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
               <h3 className="text-base font-semibold text-slate-100">
                 Optional Fields
               </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                If Website URL is not mapped, we can try Google search using
+                company details when enabled.
+              </p>
             </div>
             <div className="p-6 flex flex-col gap-5">
               {OPTIONAL_FIELDS.map((field) => (

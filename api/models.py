@@ -45,6 +45,20 @@ class SeedDatabaseRequest(BaseModel):
     def validate_mapping(cls, value: dict[str, str]) -> dict[str, str]:
         if not value:
             raise ValueError("csv_mapping cannot be empty")
+
+        normalized_mapping = {
+            str(key).strip().lower(): str(mapped_value).strip()
+            for key, mapped_value in value.items()
+            if str(mapped_value).strip()
+        }
+
+        required_fields = ["email", "company"]
+        missing_fields = [field for field in required_fields if field not in normalized_mapping]
+        if missing_fields:
+            raise ValueError(
+                f"csv_mapping must include non-empty mappings for: {', '.join(missing_fields)}"
+            )
+
         return value
 
 

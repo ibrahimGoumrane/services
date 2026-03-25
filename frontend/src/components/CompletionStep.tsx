@@ -1,13 +1,12 @@
-import React, { Children } from "react";
+import { motion } from "framer-motion";
 import {
-  CheckCircle2,
-  XCircle,
-  RefreshCw,
-  Download,
   ArrowRight,
+  CheckCircle2,
+  Download,
+  RefreshCw,
+  XCircle,
 } from "lucide-react";
 import { JobMetrics } from "../lib/types";
-import { motion } from "framer-motion";
 interface CompletionStepProps {
   status: "completed" | "failed";
   metrics: JobMetrics;
