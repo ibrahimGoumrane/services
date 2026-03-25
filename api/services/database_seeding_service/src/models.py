@@ -28,6 +28,9 @@ class ProcessingConfig:
     
     default_values: Optional[Dict[str, Any]] = None
     """Default values for null/empty fields"""
+
+    sourcefile: Optional[str] = None
+    """Original uploaded filename used for contact provenance"""
     
     def __post_init__(self):
         """Validate configuration after initialization"""

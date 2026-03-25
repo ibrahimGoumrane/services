@@ -12,7 +12,6 @@ _FORMATTER = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-_LOADED_RE = re.compile(r"Loaded\s+(\d+)\s+contacts", re.IGNORECASE)
 _BATCH_RE = re.compile(
     r"Batch:\s*(\d+)\s+inserted,\s*(\d+)\s+updated\s*\|\s*Progress:\s*(\d+)\s*/\s*(\d+)",
     re.IGNORECASE,
@@ -45,31 +44,21 @@ class WebSocketLogHandler(logging.Handler):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
-            # Then check if the message carries progress info
+            # Emit progress only for batch-completion log lines.
             message = record.getMessage()
-            changed = False
-
-            loaded_match = _LOADED_RE.search(message)
-            if loaded_match:
-                self._progress["processed"] = int(loaded_match.group(1))
-                changed = True
 
             batch_match = _BATCH_RE.search(message)
             if batch_match:
                 self._progress["inserted"] += int(batch_match.group(1))
                 self._progress["updated"] += int(batch_match.group(2))
                 self._progress["processed"] = max(self._progress["processed"], int(batch_match.group(3)))
-                changed = True
-
-            if record.levelno >= logging.ERROR:
-                self._progress["errors"] += 1
-                changed = True
-
-            if changed:
                 self._send({
                     "type": "progress",
                     "payload": self._progress.copy(),
                 })
+
+            if record.levelno >= logging.ERROR:
+                self._progress["errors"] += 1
 
         except Exception:
             print("Failed to send log record to WebSocket subscribers", flush=True)

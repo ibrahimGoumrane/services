@@ -79,14 +79,14 @@ def process_database_seeding(
         return stats
     
     # Load reference data
-    logger.info("Loading reference data from database...")
+    logger.info(f"Loading reference data from database...")
     try:
         generic_domains = set(contact_repository.get_all_generic_domains())
         generic_users = set(contact_repository.get_all_generic_users())
         generic_mx = set(contact_repository.get_all_mxrecords())
         site_builder_domains = set(contact_repository.get_all_site_builder_domains())
         
-        logger.info(f"Loaded {len(generic_domains)} generic domains, "
+        logger.debug(f"Loaded {len(generic_domains)} generic domains, "
                    f"{len(generic_users)} generic users, "
                    f"{len(generic_mx)} generic MX records, "
                    f"{len(site_builder_domains)} site builder domains")
@@ -116,7 +116,6 @@ def process_database_seeding(
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
     new_mx_records: List[Tuple[str, str, str]] = []
     start_time = time.time()
-    progress_interval = max(1, min(25, stats['total_rows'] // 20 if stats['total_rows'] else 1))
     
     try:
         # Process all rows
@@ -127,15 +126,6 @@ def process_database_seeding(
                 break
             
             stats['processed'] += 1
-            if (
-                stats['processed'] == 1
-                or stats['processed'] == stats['total_rows']
-                or stats['processed'] % progress_interval == 0
-            ):
-                percent = (stats['processed'] / stats['total_rows'] * 100) if stats['total_rows'] else 100
-                logger.info(
-                    f"Progress: {stats['processed']}/{stats['total_rows']} ({percent:.1f}%)"
-                )
             
             try:
                 # Process single contact
@@ -145,7 +135,7 @@ def process_database_seeding(
                     generic_users,
                     generic_mx,
                     site_builder_domains,
-                    config.csv_file_path,
+                    config.sourcefile or config.csv_file_path,
                     config.csv_mapping,
                     config.default_values or {},
                     mx_cache,
@@ -227,7 +217,7 @@ def _process_contact_row(
     generic_users: Set[str],
     generic_mx: Set[str],
     site_builder_domains: Set[str],
-    file_name: str,
+    sourcefile: Optional[str],
     csv_mapping: Dict[str, str],
     default_values: Dict[str, Any],
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]],
@@ -243,7 +233,7 @@ def _process_contact_row(
         generic_users: Set of generic user patterns
         generic_mx: Set of generic MX root domains
         site_builder_domains: Set of site builder domains
-        file_name: Source file name
+        sourcefile: Source file name (original upload name)
         csv_mapping: Column mapping
         default_values: Default values for null fields
         mx_cache: MX resolution cache
@@ -287,7 +277,7 @@ def _process_contact_row(
                             found_emails = validator.find_email_on_website(enriched_website)
                             if found_emails:
                                 enriched_email = found_emails[0].lower().strip()
-                                logger.info(f"Found email via web: {enriched_email}")
+                                logger.debug(f"Found email via web: {enriched_email}")
                         except Exception as e:
                             logger.warning(f"Web scraping error: {e}")
                     
@@ -302,7 +292,7 @@ def _process_contact_row(
             
             # Google search if no website and company name available
             if not enriched_website and not validator.skip_website_search and company:
-                logger.info(f"Searching Google for: {company}")
+                logger.debug(f"Searching Google for: {company}")
                 try:
                     google_result, is_valid = validator.google_search_business(
                         company,
@@ -310,14 +300,14 @@ def _process_contact_row(
                     )
                     if google_result:
                         enriched_website = google_result
-                        logger.info(f"Found website via Google: {google_result}")
+                        logger.debug(f"Found website via Google: {google_result}")
                         
                         if not enriched_email:
                             try:
                                 found_emails = validator.find_email_on_website(google_result)
                                 if found_emails:
                                     enriched_email = found_emails[0].lower().strip()
-                                    logger.info(f"Found email on Google result: {enriched_email}")
+                                    logger.debug(f"Found email on Google result: {enriched_email}")
                             except Exception as e:
                                 logger.warning(f"Web scraping error: {e}")
                 except Exception as e:
@@ -350,7 +340,7 @@ def _process_contact_row(
             if not mx_host:
                 logger.warning(f"No valid MX record for: {domain}")
                 return None
-            logger.info(f"MX Host: {mx_host} (Root: {mx_root}) for {domain}")
+            logger.debug(f"MX Host: {mx_host} (Root: {mx_root}) for {domain}")
         except Exception as e:
             logger.warning(f"MX resolution error: {e}")
             return None
@@ -385,10 +375,9 @@ def _process_contact_row(
     
     display_name = " ".join(part for part in [fname, lname] if part) or "(no name)"
     display_company = company or "(no company)"
-    logger.info(
-        f"Contact: {display_name} ({email}) - {display_company} - {url}"
-    )
-    
+
+    row_sourcefile = data_transformers.safe_get(row, csv_mapping.get("sourcefile")) or sourcefile
+
     # Return contact tuple (21 fields)
     return (
         email,  # PRIMARY KEY (0)
@@ -415,7 +404,7 @@ def _process_contact_row(
         is_generic_email,  # (17)
         is_user_generic,  # (18)
         "valid" if "@" in email else "invalid",  # (19)
-        file_name  # (20)
+        row_sourcefile  # (20)
     )
 
 

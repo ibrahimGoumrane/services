@@ -68,6 +68,7 @@ async def create_job(
         enable_web_scraping=enable_web_scraping,
         skip_google_search=skip_google_search,
         default_values=_parse_json_field("default_values", default_values),
+        sourcefile=csv_file.filename,
     ).model_dump()
     job_payload["csv_file_path"] = str(saved_path)
 

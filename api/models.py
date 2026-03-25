@@ -38,6 +38,7 @@ class SeedDatabaseRequest(BaseModel):
     enable_web_scraping: bool = True
     skip_google_search: bool = False
     default_values: dict[str, Any] | None = None
+    sourcefile: str | None = None
 
     @field_validator("csv_mapping")
     @classmethod
