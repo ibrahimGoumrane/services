@@ -207,7 +207,7 @@ class PageScraper:
                 return emails
             
             return None
-        
+
         except Exception as e:
             logger.error(f"Error finding email on page: {e}")
             return None

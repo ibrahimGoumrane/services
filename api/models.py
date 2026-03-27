@@ -52,11 +52,12 @@ class SeedDatabaseRequest(BaseModel):
             if str(mapped_value).strip()
         }
 
-        required_fields = ["email", "company"]
-        missing_fields = [field for field in required_fields if field not in normalized_mapping]
-        if missing_fields:
+        # At least ONE of {name, company, email} must be present in mapping
+        required_fields = ["name", "company", "email"]
+        has_at_least_one = any(field in normalized_mapping for field in required_fields)
+        if not has_at_least_one:
             raise ValueError(
-                f"csv_mapping must include non-empty mappings for: {', '.join(missing_fields)}"
+                f"csv_mapping must include at least one of: {', '.join(required_fields)}"
             )
 
         return value

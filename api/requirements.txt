@@ -5,6 +5,7 @@ dnspython
 mysql-connector-python
 pandas
 tldextract
+pycountry
 numpy
 requests
 beautifulsoup4

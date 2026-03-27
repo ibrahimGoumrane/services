@@ -8,14 +8,9 @@ interface MappingStepProps {
   onSubmit: (mapping: Record<string, string>, settings: JobSettings) => void;
 }
 const REQUIRED_FIELDS = [
-  {
-    id: "email",
-    label: "Email Address",
-  },
-  {
-    id: "company",
-    label: "Company Name",
-  },
+  { id: "name", label: "Name" },
+  { id: "company", label: "Company Name" },
+  { id: "email", label: "Email Address" },
 ];
 
 const OPTIONAL_FIELDS = [
@@ -145,8 +140,9 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
       [fieldId]: headerValue,
     }));
   };
-  const missingRequired = REQUIRED_FIELDS.filter((f) => !mapping[f.id]);
-  const isReady = missingRequired.length === 0;
+  const hasRequiredField = REQUIRED_FIELDS.some((f) => mapping[f.id]);
+  const missingRequired = hasRequiredField ? [] : REQUIRED_FIELDS;
+  const isReady = hasRequiredField;
   return (
     <motion.div
       variants={containerVariants}
@@ -176,7 +172,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
             <div className="px-6 py-5 border-b border-slate-700/50 bg-slate-800/40 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-semibold text-slate-100">
-                  Required Fields
+                  Required Fields (at least one of: Name, Company, Email)
                 </h3>
                 {isReady && (
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -184,7 +180,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
               </div>
               {missingRequired.length > 0 && (
                 <span className="px-2.5 py-1 rounded-md bg-rose-500/10 border border-rose-500/20 text-xs font-semibold text-rose-400">
-                  {missingRequired.length} missing
+                  At least one required
                 </span>
               )}
             </div>

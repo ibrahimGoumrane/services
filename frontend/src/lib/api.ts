@@ -3,11 +3,16 @@ import { HeadersResponse, JobResponse, JobSnapshot } from "./types";
 const BASE_URL = "http://127.0.0.1:8000";
 
 export async function fetchCsvHeaders(
-  file: File,
+  input: File | string,
   separator = ",",
 ): Promise<string[]> {
   const formData = new FormData();
-  formData.append("csv_file", file);
+
+  if (input instanceof File) {
+    formData.append("csv_file", input);
+  } else {
+    formData.append("csv_text", input);
+  }
   formData.append("csv_separator", separator);
 
   const response = await fetch(`${BASE_URL}/jobs/csv/headers`, {
@@ -24,7 +29,7 @@ export async function fetchCsvHeaders(
 }
 
 export async function createJob(
-  file: File,
+  input: File | string,
   mapping: Record<string, string>,
   separator: string,
   batchSize: number,
@@ -32,7 +37,12 @@ export async function createJob(
   skipGoogleSearch: boolean,
 ): Promise<string> {
   const formData = new FormData();
-  formData.append("csv_file", file);
+
+  if (input instanceof File) {
+    formData.append("csv_file", input);
+  } else {
+    formData.append("csv_text", input);
+  }
   formData.append("csv_mapping", JSON.stringify(mapping));
   formData.append("csv_separator", separator);
   formData.append("batch_size", batchSize.toString());

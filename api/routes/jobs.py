@@ -2,6 +2,7 @@ import asyncio
 import csv
 import json
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
@@ -45,7 +46,8 @@ async def _save_upload(file: UploadFile) -> Path:
 
 @router.post("/jobs", response_model=CreateJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_job(
-    csv_file: UploadFile = File(...),
+    csv_file: Optional[UploadFile] = File(None),
+    csv_text: Optional[str] = Form(None),
     csv_mapping: str = Form(...),
     csv_separator: str = Form(","),
     batch_size: int = Form(100),
@@ -53,13 +55,42 @@ async def create_job(
     skip_google_search: bool = Form(False),
     default_values: str | None = Form(None),
 ) -> CreateJobResponse:
-    if not csv_file.filename:
+    # Validate that exactly one input method is provided
+    if not csv_file and not csv_text:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="csv_file must include a filename",
+            detail="Either csv_file or csv_text must be provided",
+        )
+    
+    if csv_file and csv_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide either csv_file or csv_text, not both",
         )
 
-    saved_path = await _save_upload(csv_file)
+    # Handle file upload
+    if csv_file:
+        if not csv_file.filename:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="csv_file must include a filename",
+            )
+        saved_path = await _save_upload(csv_file)
+        source_filename = csv_file.filename
+    
+    # Handle text input
+    else:
+        if not csv_text or not csv_text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="csv_text is empty",
+            )
+        # Save pasted text to a temporary file
+        UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+        dest = UPLOADS_DIR / f"{uuid4()}.csv"
+        dest.write_text(csv_text.strip(), encoding="utf-8")
+        saved_path = dest
+        source_filename = "pasted_data.csv"
 
     job_payload = SeedDatabaseRequest(
         csv_mapping=_parse_json_field("csv_mapping", csv_mapping) or {},
@@ -68,7 +99,7 @@ async def create_job(
         enable_web_scraping=enable_web_scraping,
         skip_google_search=skip_google_search,
         default_values=_parse_json_field("default_values", default_values),
-        sourcefile=csv_file.filename,
+        sourcefile=source_filename,
     ).model_dump()
     job_payload["csv_file_path"] = str(saved_path)
 
@@ -87,36 +118,61 @@ async def list_jobs() -> list[JobStatusResponse]:
 
 @router.post("/jobs/csv/headers")
 async def preview_csv_headers(
-    csv_file: UploadFile = File(...),
+    csv_file: Optional[UploadFile] = File(None),
+    csv_text: Optional[str] = Form(None),
     csv_separator: str = Form(","),
 ) -> dict[str, list[str]]:
-    if not csv_file.filename:
+    # Validate that exactly one input method is provided
+    if not csv_file and not csv_text:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="csv_file must include a filename",
+            detail="Either csv_file or csv_text must be provided",
+        )
+    
+    if csv_file and csv_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide either csv_file or csv_text, not both",
         )
 
-    raw_bytes = await csv_file.read()
-    await csv_file.close()
-    if not raw_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="csv_file is empty",
-        )
+    # Process file input
+    if csv_file:
+        if not csv_file.filename:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="csv_file must include a filename",
+            )
 
-    try:
-        content = raw_bytes.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="csv_file must be UTF-8 encoded",
-        ) from exc
+        raw_bytes = await csv_file.read()
+        await csv_file.close()
+        if not raw_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="csv_file is empty",
+            )
+
+        try:
+            content = raw_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="csv_file must be UTF-8 encoded",
+            ) from exc
+    
+    # Process text input
+    else:
+        if not csv_text or not csv_text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="csv_text is empty",
+            )
+        content = csv_text.strip()
 
     lines = content.splitlines()
     if not lines:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="csv_file does not contain headers",
+            detail="CSV content does not contain headers",
         )
 
     try:
@@ -131,7 +187,7 @@ async def preview_csv_headers(
     if not any(headers):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="csv_file headers are empty",
+            detail="CSV headers are empty",
         )
 
     return {"headers": headers}
