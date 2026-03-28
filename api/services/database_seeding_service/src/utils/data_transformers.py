@@ -32,7 +32,7 @@ def safe_get(row: Any, column_name: Optional[str], default_value: Any = None) ->
 
 def format_fname(fname: Optional[str]) -> Optional[str]:
     """
-    Format first name: capitalize first letter, rest lowercase, replace spaces with hyphen.
+    Format first name: first letter uppercase, remaining letters lowercase.
     
     Args:
         fname: First name string
@@ -47,13 +47,12 @@ def format_fname(fname: Optional[str]) -> Optional[str]:
     if not fname:
         return None
     
-    fname = fname.replace(" ", "-")
     return fname.capitalize()
 
 
 def format_lname(lname: Optional[str]) -> Optional[str]:
     """
-    Format last name: all uppercase, replace spaces with hyphen.
+    Format last name: all uppercase.
     
     Args:
         lname: Last name string
@@ -68,7 +67,7 @@ def format_lname(lname: Optional[str]) -> Optional[str]:
     if not lname:
         return None
     
-    return lname.replace(" ", "-").upper()
+    return lname.upper()
 
 
 def format_eta(seconds: float) -> str:
