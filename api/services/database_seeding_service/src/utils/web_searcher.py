@@ -3,7 +3,6 @@
 import logging
 import time
 import random
-import re
 from urllib.parse import quote_plus, urlparse, parse_qs
 from typing import Tuple, Optional, List
 from bs4 import BeautifulSoup
@@ -15,38 +14,26 @@ from .web_scraper import NoDriverDriver
 logger = logging.getLogger(__name__)
 
 
-SKIPPED_RESULT_DOMAINS = {
-    "instagram.com",
-    "www.instagram.com",
-    "facebook.com",
-    "www.facebook.com",
-    "youtube.com",
-    "www.youtube.com",
-    "youtu.be",
-    "google.com",
-    "www.google.com",
-    "google.co.ma",
-    "www.google.co.ma",
-    "maps.google.com",
-    "www.maps.google.com",
-    "googleusercontent.com",
-    "www.googleusercontent.com",
-}
-
-
 class GoogleSearcher:
     """Handles Google search automation with anti-bot measures"""
     
-    def __init__(self, driver: NoDriverDriver, excluded_domains: Optional[List[str]] = None):
+    def __init__(
+        self,
+        driver: NoDriverDriver,
+        excluded_domains: Optional[List[str]] = None,
+        generic_domains: Optional[List[str]] = None,
+    ):
         """
         Initialize Google searcher.
         
         Args:
             driver: NoDriverDriver instance
             excluded_domains: Domains to exclude from search results
+            generic_domains: Generic domains to skip in search candidates
         """
         self.driver = driver
         self.excluded_domains = excluded_domains or []
+        self.generic_domains = generic_domains or []
     
     def search(
         self,
@@ -230,8 +217,9 @@ class GoogleSearcher:
         try:
             parsed = urlparse(candidate)
             netloc = (parsed.netloc or "").lower().replace("www.", "")
+            normalized_generic_domains = {d.lower().replace("www.", "") for d in self.generic_domains}
 
-            if netloc in {d.replace("www.", "") for d in SKIPPED_RESULT_DOMAINS}:
+            if any(netloc == domain or netloc.endswith(f".{domain}") for domain in normalized_generic_domains):
                 return True
 
             if "google." in netloc or netloc.startswith("maps.google"):

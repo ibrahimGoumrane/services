@@ -54,7 +54,11 @@ class WebsiteEmailValidator:
         self.driver.setup()
         
         self.scraper = PageScraper(self.driver)
-        self.searcher = GoogleSearcher(self.driver, self.not_visiting_domains)
+        self.searcher = GoogleSearcher(
+            self.driver,
+            excluded_domains=list(self.not_visiting_domains),
+            generic_domains=list(self.generic_domains),
+        )
     
     def setup_email_filters(self) -> None:
         """Load email filter lists from database"""
@@ -70,6 +74,13 @@ class WebsiteEmailValidator:
             logger.info(f"Loaded {len(self.generic_users)} generic users")
             logger.info(f"Loaded {len(self.not_visiting_domains)} not visiting domains")
             logger.info(f"Loaded {len(self.site_builder_domains)} site builder domains")
+            
+            # Update the searcher's excluded domains now that they are loaded
+            # (setup_driver() creates the searcher before filters are available)
+            if self.searcher:
+                self.searcher.excluded_domains = list(self.not_visiting_domains)
+                self.searcher.generic_domains = list(self.generic_domains)
+                logger.info(f"Updated GoogleSearcher with {len(self.not_visiting_domains)} excluded domains")
             
             # Create email validator with filters
             self.email_validator = EmailValidator(

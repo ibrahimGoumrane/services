@@ -34,7 +34,7 @@ class JobState:
 class SeedDatabaseRequest(BaseModel):
     csv_mapping: dict[str, str]
     csv_separator: str = ","
-    batch_size: int = Field(default=100, ge=1)
+    batch_size: int = Field(default=20, ge=1)
     enable_web_scraping: bool = True
     skip_google_search: bool = False
     default_values: dict[str, Any] | None = None

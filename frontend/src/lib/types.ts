@@ -15,6 +15,23 @@ export interface JobSettings {
   skipGoogleSearch: boolean;
 }
 
+/**
+ * Mapping value type for field mapping:
+ * - "": Field is skipped (not mapped)
+ * - "__default__:{value}": Use a constant default value for all rows
+ * - "{columnName}": Map from a CSV column
+ */
+export type MappingValue = string;
+
+export interface FieldMapping {
+  [fieldId: string]: MappingValue;
+}
+
+export interface FieldMappingOption {
+  column?: string;
+  defaultValue?: string;
+}
+
 export interface LogEntry {
   level: "INFO" | "WARN" | "ERROR" | "DEBUG";
   message: string;

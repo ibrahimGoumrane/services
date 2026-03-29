@@ -3,6 +3,58 @@
 import pandas as pd
 from typing import Optional, Any
 
+# Prefix for default values in mapping
+DEFAULT_VALUE_PREFIX = "__default__:"
+
+
+def is_default_value(mapping_value: Optional[str]) -> bool:
+    """Check if a mapping value is a default value (starts with __default__:)"""
+    if mapping_value is None:
+        return False
+    return mapping_value.startswith(DEFAULT_VALUE_PREFIX)
+
+
+def extract_default_value(mapping_value: str) -> Any:
+    """Extract the actual default value from a mapping value that starts with __default__:"""
+    if not is_default_value(mapping_value):
+        return None
+    return mapping_value[len(DEFAULT_VALUE_PREFIX):]
+
+
+def get_mapped_value(row: Any, mapping_value: Optional[str], fallback_default: Any = None) -> Any:
+    """
+    Get a value from a row based on mapping value.
+    
+    Supports two formats:
+    - Column name: maps from CSV column
+    - __default__:{value}: returns the default value for all rows
+    
+    Args:
+        row: pandas row or dict-like object
+        mapping_value: either a column name or "__default__:{value}"
+        fallback_default: default value to use if the column is empty/NaN
+    
+    Returns:
+        Value from row, default value, or fallback_default
+    """
+    if mapping_value is None or mapping_value == "":
+        return fallback_default
+    
+    # Check if this is a default value
+    if is_default_value(mapping_value):
+        return extract_default_value(mapping_value)
+    
+    # Otherwise, treat as column name
+    try:
+        value = row.get(mapping_value) if hasattr(row, 'get') else row[mapping_value]
+    except (KeyError, TypeError, IndexError):
+        return fallback_default
+    
+    if pd.isna(value) or value == '' or value == 'None':
+        return fallback_default
+    
+    return value
+
 
 def safe_get(row: Any, column_name: Optional[str], default_value: Any = None) -> Any:
     """
