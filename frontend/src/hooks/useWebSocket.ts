@@ -21,7 +21,14 @@ function isJobStatus(value: unknown): value is JobStatus {
 }
 
 function toLogEntry(data: Record<string, unknown>): LogEntry | null {
-  const level = data.level;
+  const rawLevel =
+    typeof data.level === "string" ? data.level.toUpperCase() : "INFO";
+  const level =
+    rawLevel === "WARNING"
+      ? "WARN"
+      : rawLevel === "CRITICAL"
+        ? "ERROR"
+        : rawLevel;
   const message = data.message;
   const timestamp = data.timestamp;
 
@@ -89,9 +96,9 @@ function mergeMetricsFromLog(previous: JobMetrics, log: LogEntry): JobMetrics {
     }
   }
 
-  const batchMatch = message.match(
-    /Batch:\s*(\d+)\s+inserted,\s*(\d+)\s+updated/i,
-  );
+  const batchMatch =
+    message.match(/Batch:\s*(\d+)\s+inserted,\s*(\d+)\s+updated/i) ||
+    message.match(/Emails:\s*inserted=(\d+),\s*updated=(\d+)/i);
   if (batchMatch) {
     const inserted = Number(batchMatch[1]);
     const updated = Number(batchMatch[2]);

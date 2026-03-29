@@ -6,6 +6,7 @@ from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import PlainTextResponse
 
 from api.models import CreateJobResponse, JobStatusResponse, SeedDatabaseRequest
 from api.services.utils.job_manager import job_store
@@ -199,3 +200,16 @@ async def get_job(job_id: str) -> JobStatusResponse:
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     return JobStatusResponse(**job.to_dict())
+
+
+@router.get("/jobs/{job_id}/logs", response_class=PlainTextResponse)
+async def get_job_logs(job_id: str) -> PlainTextResponse:
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    logs = job_store.get_job_logs(job_id)
+    if not logs:
+        return PlainTextResponse("No logs captured for this job yet.")
+
+    return PlainTextResponse("\n".join(logs))

@@ -9,6 +9,42 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+DOWNLOADABLE_FILE_EXTENSIONS = (
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".xlsm",
+    ".ods",
+    ".csv",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",
+)
+
+
+def extract_domain(url: str) -> str:
+    """Extract a normalized registrable domain string from URL-like input."""
+    if not url:
+        return ""
+
+    candidate = url.strip()
+    if not candidate:
+        return ""
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate):
+        candidate = f"https://{candidate}"
+
+    parsed = urlparse(candidate)
+    netloc = parsed.netloc or parsed.path.split("/", 1)[0]
+    netloc = netloc.split("@")[-1].split(":", 1)[0].lower().strip().strip(".")
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    return netloc
+
+
 def normalize_url(url: str) -> str:
     """
     Normalize a URL by ensuring it has a protocol (https by default).
@@ -29,31 +65,14 @@ def normalize_url(url: str) -> str:
     return url
 
 
-def is_pdf_url(url: str) -> bool:
-    """
-    Check if URL points to a PDF file.
-    
-    Args:
-        url: URL string to check
-    
-    Returns:
-        True if URL is a PDF, False otherwise
-    """
+def is_downloadable_file_url(url: str) -> bool:
+    """Return True when URL path points to a non-HTML downloadable file."""
     if not url:
         return False
-    
-    url_lower = url.lower()
-    
-    # Check file extension in URL
-    if url_lower.endswith('.pdf'):
-        return True
-    
-    # Check if .pdf appears in the path
-    parsed = urlparse(url_lower)
-    if '.pdf' in parsed.path:
-        return True
-    
-    return False
+
+    parsed = urlparse(normalize_url(url))
+    path = (parsed.path or "").lower()
+    return any(path.endswith(ext) for ext in DOWNLOADABLE_FILE_EXTENSIONS)
 
 
 def is_excluded_domain(url: str, excluded_domains: list) -> bool:
@@ -69,25 +88,33 @@ def is_excluded_domain(url: str, excluded_domains: list) -> bool:
     """
     if not url or not excluded_domains:
         return False
-    
+
     try:
-        parsed = urlparse(url)
-        domain = parsed.netloc.lower().replace('www.', '')
-        
+        domain = extract_domain(url)
+        if not domain:
+            return False
+
         for excluded in excluded_domains:
-            excluded_clean = str(excluded).lower().replace('www.', '').strip()
-            
+            excluded_clean = extract_domain(str(excluded))
+            if not excluded_clean:
+                continue
+
             if domain == excluded_clean or domain.endswith('.' + excluded_clean):
                 logger.debug(f"Domain {domain} matches excluded domain {excluded_clean}")
                 return True
-        
+
         return False
     except Exception as e:
         logger.error(f"Error checking excluded domain for {url}: {e}")
         return False
 
 
-def validate_website_http(url: str, timeout: int = 3, allow_pdf: bool = False) -> bool:
+def validate_website_http(
+    url: str,
+    timeout: int = 3,
+    allow_pdf: bool = False,
+    excluded_domains: list[str] | None = None,
+) -> bool:
     """
     Check if a website is accessible via HTTP GET request.
     
@@ -102,21 +129,33 @@ def validate_website_http(url: str, timeout: int = 3, allow_pdf: bool = False) -
     if not url:
         return False
     
-    # Check if URL is a PDF file
-    if is_pdf_url(url) and not allow_pdf:
-        logger.warning(f"✗ Skipping PDF file: {url}")
+    if excluded_domains and is_excluded_domain(url, excluded_domains):
+        logger.warning(f"✗ Skipping excluded domain: {url}")
         return False
-    
-    # Normalize URL
+
     url = normalize_url(url)
-    
+
+    # Check if URL is a downloadable file
+    if is_downloadable_file_url(url) and not allow_pdf:
+        logger.warning(f"✗ Skipping downloadable file URL: {url}")
+        return False
+
     try:
         response = requests.get(url, timeout=timeout, allow_redirects=True)
-        
-        # Check if response is PDF content
+
+        final_url = response.url or url
+        if excluded_domains and is_excluded_domain(final_url, excluded_domains):
+            logger.warning(f"✗ Redirected to excluded domain: {final_url}")
+            return False
+
+        if is_downloadable_file_url(final_url) and not allow_pdf:
+            logger.warning(f"✗ Redirected to downloadable file: {final_url}")
+            return False
+
+        # Keep only HTML pages for scraping when file downloads are not allowed.
         content_type = response.headers.get('Content-Type', '').lower()
-        if 'application/pdf' in content_type and not allow_pdf:
-            logger.warning(f"✗ Skipping PDF content: {url}")
+        if not allow_pdf and content_type and 'text/html' not in content_type:
+            logger.warning(f"✗ Skipping non-HTML content: {final_url} ({content_type})")
             return False
         
         if response.status_code == 200:

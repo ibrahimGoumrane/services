@@ -7,7 +7,7 @@ from urllib.parse import quote_plus, urlparse, parse_qs
 from typing import Tuple, Optional, List
 from bs4 import BeautifulSoup
 
-from .url_utils import is_pdf_url, is_excluded_domain, validate_website_http
+from .url_utils import validate_website_http
 from .web_scraper import NoDriverDriver
 
 
@@ -72,15 +72,12 @@ class GoogleSearcher:
                     logger.warning("No valid Google results found")
                     return None, False
 
-                # Try candidates until one validates (normally one candidate, first valid top-to-bottom).
+                # Extractor returns candidates already validated by validate_website_http.
                 for idx, url in enumerate(valid_results, 1):
                     logger.info(f"Trying result #{idx}: {url}")
 
-                    if validate_website_http(url):
-                        logger.info(f"✓ Result #{idx} is valid")
-                        return url, True
-
-                    logger.warning(f"✗ Result #{idx} failed validation")
+                    logger.info(f"✓ Result #{idx} is valid")
+                    return url, True
 
                 logger.warning("No valid website candidate passed HTTP validation")
                 return None, False
@@ -131,58 +128,28 @@ class GoogleSearcher:
 
     def _extract_google_result_urls(self, html: str) -> List[str]:
         """
-        Extract the first valid external website URL from Google results.
-
-        Target selector order:
-        - top-to-bottom result containers
-        - first anchor matching .A6K0A a[jsname="UWckNb"]
+        Extract the first HTTP-validated external website URL from Google results.
+        Targets result containers (.A6K0A) with their primary anchor (jsname="UWckNb").
         """
         soup = BeautifulSoup(html or "", "html.parser")
-        urls: List[str] = []
+        excluded_for_validation = list(self.excluded_domains) + list(self.generic_domains)
 
-        containers = soup.select(".A6K0A")
-        for container in containers:
-            # Not always a direct child; search the full subtree inside each result container.
+        for container in soup.select(".A6K0A"):
             anchor = container.select_one('a[jsname="UWckNb"]')
             if not anchor:
-                anchor = container.select_one("a.zReHs")
-            if not anchor:
                 continue
 
             href = (anchor.get("href") or "").strip()
             candidate = self._normalize_google_href(href)
             if not candidate:
                 continue
-            if self._should_skip_candidate(candidate):
+
+            if not validate_website_http(candidate, excluded_domains=excluded_for_validation):
                 continue
 
-            # Stop at first valid external link as requested.
-            urls.append(candidate)
-            return urls
+            return [candidate]
 
-        # Fallback 1: Google markup can vary; try global selector while preserving order.
-        for anchor in soup.select('a[jsname="UWckNb"], a.zReHs'):
-            href = (anchor.get("href") or "").strip()
-            candidate = self._normalize_google_href(href)
-            if not candidate:
-                continue
-            if self._should_skip_candidate(candidate):
-                continue
-            urls.append(candidate)
-            return urls
-
-        # Fallback 2: broader result links in Google blocks (still top-to-bottom first valid).
-        for anchor in soup.select("div.g a[href], .tF2Cxc a[href], .MjjYud a[href]"):
-            href = (anchor.get("href") or "").strip()
-            candidate = self._normalize_google_href(href)
-            if not candidate:
-                continue
-            if self._should_skip_candidate(candidate):
-                continue
-            urls.append(candidate)
-            return urls
-
-        return urls
+        return []
 
     def _normalize_google_href(self, href: str) -> str:
         """Normalize Google SERP hrefs to direct target URLs."""
@@ -208,29 +175,3 @@ class GoogleSearcher:
             return href.strip()
 
         return ""
-
-    def _should_skip_candidate(self, candidate: str) -> bool:
-        """Apply domain and content filtering rules for extracted links."""
-        if not candidate:
-            return True
-
-        try:
-            parsed = urlparse(candidate)
-            netloc = (parsed.netloc or "").lower().replace("www.", "")
-            normalized_generic_domains = {d.lower().replace("www.", "") for d in self.generic_domains}
-
-            if any(netloc == domain or netloc.endswith(f".{domain}") for domain in normalized_generic_domains):
-                return True
-
-            if "google." in netloc or netloc.startswith("maps.google"):
-                return True
-
-            if is_pdf_url(candidate):
-                return True
-
-            if is_excluded_domain(candidate, self.excluded_domains):
-                return True
-
-            return False
-        except Exception:
-            return True

@@ -53,7 +53,7 @@ class WebsiteEmailValidator:
         self.driver = NoDriverDriver()
         self.driver.setup()
         
-        self.scraper = PageScraper(self.driver)
+        self.scraper = PageScraper(self.driver, excluded_domains=list(self.not_visiting_domains))
         self.searcher = GoogleSearcher(
             self.driver,
             excluded_domains=list(self.not_visiting_domains),
@@ -81,6 +81,9 @@ class WebsiteEmailValidator:
                 self.searcher.excluded_domains = list(self.not_visiting_domains)
                 self.searcher.generic_domains = list(self.generic_domains)
                 logger.info(f"Updated GoogleSearcher with {len(self.not_visiting_domains)} excluded domains")
+
+            if self.scraper:
+                self.scraper.excluded_domains = list(self.not_visiting_domains)
             
             # Create email validator with filters
             self.email_validator = EmailValidator(
@@ -106,7 +109,10 @@ class WebsiteEmailValidator:
         Returns:
             True if website is accessible, False otherwise
         """
-        return validate_website_http(url)
+        return validate_website_http(
+            url,
+            excluded_domains=list(self.not_visiting_domains),
+        )
     
     def find_email_on_website(self, website_url: str) -> Optional[List[str]]:
         """

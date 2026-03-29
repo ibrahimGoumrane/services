@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useJobPolling } from "../hooks/useJobPolling";
-import { JobStatus, JobMetrics } from "../lib/types";
+import { JobStatus, JobMetrics, LogEntry } from "../lib/types";
 import {
   Loader2,
   CheckCircle2,
@@ -17,6 +17,7 @@ interface ProcessingStepProps {
     status: "completed" | "failed",
     metrics: JobMetrics,
     error?: string,
+    logs?: LogEntry[],
   ) => void;
 }
 const STATUS_ORDER = ["queued", "running", "completed"];
@@ -50,7 +51,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
     polledError?: string,
   ) => {
     if (polledStatus === "completed" || polledStatus === "failed") {
-      onComplete(polledStatus, polledMetrics || metrics, polledError);
+      onComplete(polledStatus, polledMetrics || metrics, polledError, logs);
     }
   };
   useJobPolling(jobId, status, isConnected, handlePollingUpdate);
@@ -64,11 +65,11 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
   useEffect(() => {
     if (status === "completed" || status === "failed") {
       const timer = setTimeout(() => {
-        onComplete(status, metrics, error || undefined);
+        onComplete(status, metrics, error || undefined, logs);
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [status, metrics, error, onComplete]);
+  }, [status, metrics, error, onComplete, logs]);
   const getStatusIcon = (stepStatus: string) => {
     if (status === "failed" && stepStatus === "running")
       return <XCircle className="w-5 h-5 text-rose-500" />;

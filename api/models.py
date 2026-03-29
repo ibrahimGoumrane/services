@@ -34,7 +34,7 @@ class JobState:
 class SeedDatabaseRequest(BaseModel):
     csv_mapping: dict[str, str]
     csv_separator: str = ","
-    batch_size: int = Field(default=20, ge=1)
+    batch_size: int = Field(default=5, ge=1)
     enable_web_scraping: bool = True
     skip_google_search: bool = False
     default_values: dict[str, Any] | None = None
@@ -52,8 +52,8 @@ class SeedDatabaseRequest(BaseModel):
             if str(mapped_value).strip()
         }
 
-        # At least ONE of {name, company, email} must be present in mapping
-        required_fields = ["name", "company", "email"]
+        # At least one primary identity field is required.
+        required_fields = ["fullname", "name", "email"]
         has_at_least_one = any(field in normalized_mapping for field in required_fields)
         if not has_at_least_one:
             raise ValueError(

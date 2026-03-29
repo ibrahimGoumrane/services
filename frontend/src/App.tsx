@@ -5,13 +5,13 @@ import { MappingStep } from "./components/MappingStep";
 import { ProcessingStep } from "./components/ProcessingStep";
 import { CompletionStep } from "./components/CompletionStep";
 import { createJob, fetchJobs } from "./lib/api";
-import { JobSettings, JobMetrics, JobSnapshot } from "./lib/types";
+import { JobSettings, JobMetrics, JobSnapshot, LogEntry } from "./lib/types";
 import { Database, AlertCircle, ListChecks } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 export function App() {
   const [step, setStep] = useState(1);
   // Job State
-  const [file, setFile] = useState<File | null>(null);
+  const [csvInput, setCsvInput] = useState<File | string | null>(null);
   const [separator, setSeparator] = useState(",");
   const [headers, setHeaders] = useState<string[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -25,6 +25,7 @@ export function App() {
     updated: 0,
     errors: 0,
   });
+  const [finalLogs, setFinalLogs] = useState<LogEntry[]>([]);
   const [finalError, setFinalError] = useState<string | undefined>();
   // UI State
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,6 +62,7 @@ export function App() {
     if (job.status === "completed" || job.status === "failed") {
       setFinalStatus(job.status);
       setFinalMetrics(toMetrics(job));
+      setFinalLogs([]);
       setFinalError(job.error ?? undefined);
       setStep(4);
       return;
@@ -79,11 +81,11 @@ export function App() {
     [jobs],
   );
   const handleUploadComplete = (
-    selectedFile: File,
+    selectedInput: File | string,
     selectedSeparator: string,
     detectedHeaders: string[],
   ) => {
-    setFile(selectedFile);
+    setCsvInput(selectedInput);
     setSeparator(selectedSeparator);
     setHeaders(detectedHeaders);
     setStep(2);
@@ -92,12 +94,12 @@ export function App() {
     mapping: Record<string, string>,
     settings: JobSettings,
   ) => {
-    if (!file) return;
+    if (!csvInput) return;
     setIsSubmitting(true);
     setSubmitError(null);
     try {
       const newJobId = await createJob(
-        file,
+        csvInput,
         mapping,
         separator,
         settings.batchSize,
@@ -119,18 +121,21 @@ export function App() {
     status: "completed" | "failed",
     metrics: JobMetrics,
     error?: string,
+    logs?: LogEntry[],
   ) => {
     setFinalStatus(status);
     setFinalMetrics(metrics);
+    setFinalLogs(logs || []);
     setFinalError(error);
     setStep(4);
   };
   const resetWizard = () => {
     setStep(1);
-    setFile(null);
+    setCsvInput(null);
     setHeaders([]);
     setJobId(null);
     setFinalStatus(null);
+    setFinalLogs([]);
     setFinalError(undefined);
   };
   return (
@@ -326,7 +331,9 @@ export function App() {
               >
                 <CompletionStep
                   status={finalStatus}
+                  jobId={jobId}
                   metrics={finalMetrics}
+                  logs={finalLogs}
                   error={finalError}
                   onReset={resetWizard}
                 />

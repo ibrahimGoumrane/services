@@ -8,11 +8,10 @@ from urllib.parse import urljoin
 from dotenv import load_dotenv
 
 load_dotenv()
-import requests
 import nodriver as uc
 
 
-from .url_utils import normalize_url, is_pdf_url
+from .url_utils import normalize_url, validate_website_http
 from .email_extractors import extract_emails_from_text
 
 
@@ -134,14 +133,24 @@ class NoDriverDriver:
 class PageScraper:
     """Handles web page scraping with nodriver"""
     
-    def __init__(self, driver: NoDriverDriver):
+    def __init__(
+        self,
+        driver: NoDriverDriver,
+        excluded_domains: Optional[List[str]] = None,
+        prevalidate_http: bool = False,
+    ):
         """
         Initialize page scraper.
         
         Args:
             driver: NoDriverDriver instance
+            excluded_domains: Domains blocked from browsing
+            prevalidate_http: When True, run HTTP validation before browser navigation.
+                Keep False to avoid excessive extra HTTP requests.
         """
         self.driver = driver
+        self.excluded_domains = excluded_domains or []
+        self.prevalidate_http = prevalidate_http
     
     def accept_cookies(self) -> bool:
         """Try to accept cookie consent banners"""
@@ -183,8 +192,12 @@ class PageScraper:
             List of emails found, or None
         """
         try:
-            if is_pdf_url(url):
-                logger.warning(f"⏭️ Skipping PDF file: {url}")
+            if self.prevalidate_http and not validate_website_http(
+                url,
+                timeout=3,
+                excluded_domains=self.excluded_domains,
+            ):
+                logger.warning(f"⏭️ Skipping URL rejected by validator: {url}")
                 return None
             
             logger.info(f"Searching for email on: {url}")
@@ -192,8 +205,12 @@ class PageScraper:
             self.driver.sleep(1.0)
 
             current_url = self.driver.current_url
-            if is_pdf_url(current_url):
-                logger.warning(f"⏭️ Page redirected to PDF: {current_url}")
+            if not validate_website_http(
+                current_url,
+                timeout=3,
+                excluded_domains=self.excluded_domains,
+            ):
+                logger.warning(f"⏭️ Skipping page URL rejected by validator: {current_url}")
                 return None
 
             self.accept_cookies()
@@ -237,8 +254,11 @@ class PageScraper:
             contact_url = urljoin(base_url, path)
             
             try:
-                response = requests.head(contact_url, timeout=2, allow_redirects=True)
-                if response.status_code == 200:
+                if validate_website_http(
+                    contact_url,
+                    timeout=2,
+                    excluded_domains=self.excluded_domains,
+                ):
                     logger.info(f"✓ Found contact page: {contact_url}")
                     return contact_url
             except Exception:
@@ -261,6 +281,7 @@ class PageScraper:
             return None
         
         website_url = normalize_url(website_url)
+
         all_emails = []
         
         # Try main page

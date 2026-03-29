@@ -50,6 +50,7 @@ tables = {
     "Contact": """
         CREATE TABLE Gcontact (
             email VARCHAR(255) PRIMARY KEY,
+            fullname VARCHAR(255),
             fname VARCHAR(255),
             lname VARCHAR(255),
             url VARCHAR(255),
@@ -57,7 +58,9 @@ tables = {
             phone VARCHAR(255),
             mobile VARCHAR(255),
             fax VARCHAR(255),
-            company VARCHAR(255),
+            name VARCHAR(255),
+            CA VARCHAR(255),
+            activite VARCHAR(255),
             address VARCHAR(255),
             city VARCHAR(255),
             zip VARCHAR(255),

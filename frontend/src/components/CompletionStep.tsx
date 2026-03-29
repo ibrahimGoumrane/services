@@ -6,10 +6,13 @@ import {
   RefreshCw,
   XCircle,
 } from "lucide-react";
-import { JobMetrics } from "../lib/types";
+import { JobMetrics, LogEntry } from "../lib/types";
+import { fetchJobLogs } from "../lib/api";
 interface CompletionStepProps {
   status: "completed" | "failed";
+  jobId: string | null;
   metrics: JobMetrics;
+  logs: LogEntry[];
   error?: string;
   onReset: () => void;
 }
@@ -40,29 +43,79 @@ const itemVariants = {
 };
 export function CompletionStep({
   status,
+  jobId,
   metrics,
+  logs,
   error,
   onReset,
 }: CompletionStepProps) {
   const isSuccess = status === "completed";
 
-  const handleExportLogs = () => {
-    // Placeholder: logs would need to be passed as prop or fetched from API
-    const logsContent =
-      "Logs export feature - integrate with job API endpoint to fetch logs";
+  const downloadText = (content: string) => {
+    const blob = new Blob([content], {
+      type: "text/plain;charset=utf-8",
+    });
+    const objectUrl = URL.createObjectURL(blob);
     const element = document.createElement("a");
-    element.setAttribute(
-      "href",
-      "data:text/plain;charset=utf-8," + encodeURIComponent(logsContent),
-    );
+    element.setAttribute("href", objectUrl);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     element.setAttribute(
       "download",
-      `job-logs-${new Date().toISOString()}.txt`,
+      `job-${jobId || "unknown"}-logs-${timestamp}.txt`,
     );
     element.style.display = "none";
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  const handleExportLogs = async () => {
+    if (logs.length > 0) {
+      const lines = logs.map((entry) => {
+        const ts = new Date(entry.timestamp || Date.now()).toISOString();
+        return `[${ts}] ${entry.level} ${entry.message}`;
+      });
+      downloadText(lines.join("\n"));
+      return;
+    }
+
+    try {
+      if (!jobId) {
+        downloadText(
+          [
+            `Status: ${status}`,
+            `Processed: ${metrics.processed}`,
+            `Inserted: ${metrics.inserted}`,
+            `Updated: ${metrics.updated}`,
+            `Errors: ${metrics.errors}`,
+            error ? `Error: ${error}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        );
+        return;
+      }
+
+      const logsContent = await fetchJobLogs(jobId);
+      downloadText(logsContent);
+    } catch (downloadError) {
+      console.error("Failed to export logs", downloadError);
+      downloadText(
+        [
+          `Status: ${status}`,
+          `Processed: ${metrics.processed}`,
+          `Inserted: ${metrics.inserted}`,
+          `Updated: ${metrics.updated}`,
+          `Errors: ${metrics.errors}`,
+          error ? `Error: ${error}` : "",
+          "",
+          "Detailed logs were not available from the API endpoint.",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    }
   };
   return (
     <motion.div
@@ -129,7 +182,7 @@ export function CompletionStep({
               color: "text-rose-400",
               border: "border-t-rose-500",
             },
-          ].map((m, i) => (
+          ].map((m) => (
             <motion.div
               key={m.label}
               whileHover={{

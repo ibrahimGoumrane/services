@@ -24,15 +24,18 @@ interface FieldState {
 }
 
 const REQUIRED_FIELDS: FieldConfig[] = [
-  { id: "name", label: "Name", isRequired: true },
-  { id: "company", label: "Company Name", isRequired: true },
+  { id: "fullname", label: "Full Name", isRequired: true },
+  { id: "name", label: "Company Name", isRequired: true },
   { id: "email", label: "Email Address", isRequired: true },
 ];
 
 const OPTIONAL_FIELDS: FieldConfig[] = [
-  { id: "url", label: "Website URL", isRequired: false },
   { id: "fname", label: "First Name", isRequired: false },
   { id: "lname", label: "Last Name", isRequired: false },
+  { id: "url", label: "Website URL", isRequired: false },
+  { id: "ca", label: "CA (Turnover)", isRequired: false },
+  { id: "activite", label: "Activite", isRequired: false },
+  { id: "secteur", label: "Secteur", isRequired: false },
   { id: "position", label: "Position", isRequired: false },
   { id: "phone", label: "Phone Number", isRequired: false },
   { id: "mobile", label: "Mobile", isRequired: false },
@@ -76,7 +79,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
     {},
   );
   const [settings, setSettings] = useState<JobSettings>({
-    batchSize: 20,
+    batchSize: 5,
     enableWebScraping: true,
     skipGoogleSearch: false,
   });

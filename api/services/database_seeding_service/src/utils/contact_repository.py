@@ -266,12 +266,43 @@ def batch_create_mxrecords(mx_list: List[Tuple[str, str, str]]) -> int:
 # CONTACTS
 # ========================================
 
+CONTACT_COLUMNS = [
+    "email",
+    "fullname",
+    "fname",
+    "lname",
+    "url",
+    "position",
+    "phone",
+    "mobile",
+    "fax",
+    "name",
+    "address",
+    "city",
+    "zip",
+    "country",
+    "urlcontactform",
+    "linkedin",
+    "image",
+    "mx",
+    "emailgeneric",
+    "usergeneric",
+    "syntaxeemail",
+    "sourcefile",
+    "CA",
+    "activite",
+]
+
+CONTACT_COLUMNS_SQL = ", ".join(CONTACT_COLUMNS)
+CONTACT_VALUES_SQL = ", ".join(["%s"] * len(CONTACT_COLUMNS))
+
+
 def get_all_contacts() -> List[Tuple]:
     """Get all contacts from database"""
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM Gcontact")
+        cursor.execute(f"SELECT {CONTACT_COLUMNS_SQL} FROM Gcontact")
         return cursor.fetchall()
     finally:
         cursor.close()
@@ -283,7 +314,7 @@ def get_contact(email: str) -> Optional[Tuple]:
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("SELECT * FROM Gcontact WHERE email=%s", (email,))
+        cursor.execute(f"SELECT {CONTACT_COLUMNS_SQL} FROM Gcontact WHERE email=%s", (email,))
         return cursor.fetchone()
     finally:
         cursor.close()
@@ -292,6 +323,7 @@ def get_contact(email: str) -> Optional[Tuple]:
 
 def create_contact(
     email: str,
+    fullname: Optional[str] = None,
     fname: Optional[str] = None,
     lname: Optional[str] = None,
     url: Optional[str] = None,
@@ -299,7 +331,7 @@ def create_contact(
     phone: Optional[str] = None,
     mobile: Optional[str] = None,
     fax: Optional[str] = None,
-    company: Optional[str] = None,
+    name: Optional[str] = None,
     address: Optional[str] = None,
     city: Optional[str] = None,
     zip: Optional[str] = None,
@@ -311,7 +343,9 @@ def create_contact(
     emailgeneric: Optional[bool] = None,
     usergeneric: Optional[bool] = None,
     syntaxeemail: Optional[str] = None,
-    sourcefile: Optional[str] = None
+    sourcefile: Optional[str] = None,
+    ca: Optional[str] = None,
+    activite: Optional[str] = None,
 ) -> None:
     """Create a contact record if it doesn't already exist"""
     conn = get_connection()
@@ -321,14 +355,14 @@ def create_contact(
         if not cursor.fetchone():
             cursor.execute("""
                 INSERT INTO Gcontact
-                (email, fname, lname, url, position, phone, mobile, fax, company, address, 
-                 city, zip, country, urlcontactform, linkedin, image, mx, emailgeneric, 
-                 usergeneric, syntaxeemail, sourcefile)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                (email, fullname, fname, lname, url, position, phone, mobile, fax, name, address,
+                 city, zip, country, urlcontactform, linkedin, image, mx, emailgeneric,
+                 usergeneric, syntaxeemail, sourcefile, CA, activite)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (
-                email, fname, lname, url, position, phone, mobile, fax, company, address,
+                email, fullname, fname, lname, url, position, phone, mobile, fax, name, address,
                 city, zip, country, urlcontactform, linkedin, image, mx, emailgeneric,
-                usergeneric, syntaxeemail, sourcefile
+                usergeneric, syntaxeemail, sourcefile, ca, activite
             ))
             conn.commit()
     finally:
@@ -338,6 +372,7 @@ def create_contact(
 
 def update_contact(
     email: str,
+    fullname: Optional[str] = None,
     fname: Optional[str] = None,
     lname: Optional[str] = None,
     url: Optional[str] = None,
@@ -345,7 +380,7 @@ def update_contact(
     phone: Optional[str] = None,
     mobile: Optional[str] = None,
     fax: Optional[str] = None,
-    company: Optional[str] = None,
+    name: Optional[str] = None,
     address: Optional[str] = None,
     city: Optional[str] = None,
     zip: Optional[str] = None,
@@ -357,7 +392,9 @@ def update_contact(
     emailgeneric: Optional[bool] = None,
     usergeneric: Optional[bool] = None,
     syntaxeemail: Optional[str] = None,
-    sourcefile: Optional[str] = None
+    sourcefile: Optional[str] = None,
+    ca: Optional[str] = None,
+    activite: Optional[str] = None,
 ) -> None:
     """Update a contact record by email"""
     conn = get_connection()
@@ -365,15 +402,15 @@ def update_contact(
     try:
         cursor.execute("""
             UPDATE Gcontact
-            SET fname=%s, lname=%s, url=%s, position=%s, phone=%s, mobile=%s, fax=%s,
-                company=%s, address=%s, city=%s, zip=%s, country=%s, urlcontactform=%s,
+            SET fullname=%s, fname=%s, lname=%s, url=%s, position=%s, phone=%s, mobile=%s, fax=%s,
+                name=%s, address=%s, city=%s, zip=%s, country=%s, urlcontactform=%s,
                 linkedin=%s, image=%s, mx=%s, emailgeneric=%s, usergeneric=%s,
-                syntaxeemail=%s, sourcefile=%s
+                syntaxeemail=%s, sourcefile=%s, CA=%s, activite=%s
             WHERE email=%s
         """, (
-            fname, lname, url, position, phone, mobile, fax, company, address, city, zip,
+            fullname, fname, lname, url, position, phone, mobile, fax, name, address, city, zip,
             country, urlcontactform, linkedin, image, mx, emailgeneric, usergeneric,
-            syntaxeemail, sourcefile, email
+            syntaxeemail, sourcefile, ca, activite, email
         ))
         conn.commit()
     finally:
@@ -412,9 +449,7 @@ def get_contacts_by_emails(emails: List[str]) -> Dict[str, Tuple]:
     try:
         placeholders = ','.join(['%s'] * len(emails))
         cursor.execute(f"""
-            SELECT email, fname, lname, url, position, phone, mobile, fax, company, address,
-                   city, zip, country, urlcontactform, linkedin, image, mx, emailgeneric,
-                   usergeneric, syntaxeemail, sourcefile
+            SELECT {CONTACT_COLUMNS_SQL}
             FROM Gcontact WHERE email IN ({placeholders})
         """, emails)
         rows = cursor.fetchall()
@@ -431,10 +466,11 @@ def batch_create_contacts(contacts_list: List[Tuple]) -> Tuple[int, int]:
     
     Deduplicates within batch and merges non-null values into existing records.
     
-    Tuple structure (21 fields):
-        0:email(PK), 1:fname, 2:lname, 3:url, 4:position, 5:phone, 6:mobile, 7:fax,
-        8:company, 9:address, 10:city, 11:zip, 12:country, 13:urlcontactform, 14:linkedin,
-        15:image, 16:mx, 17:emailgeneric, 18:usergeneric, 19:syntaxeemail, 20:sourcefile
+    Tuple structure (24 fields):
+        0:email(PK), 1:fullname, 2:fname, 3:lname, 4:url, 5:position, 6:phone, 7:mobile,
+        8:fax, 9:name(company), 10:address, 11:city, 12:zip, 13:country, 14:urlcontactform,
+        15:linkedin, 16:image, 17:mx, 18:emailgeneric, 19:usergeneric, 20:syntaxeemail,
+        21:sourcefile, 22:CA, 23:activite
     
     Args:
         contacts_list: List of contact tuples
@@ -470,9 +506,7 @@ def batch_create_contacts(contacts_list: List[Tuple]) -> Tuple[int, int]:
         emails = [contact[0] for contact in deduped_contacts]
         placeholders = ','.join(['%s'] * len(emails))
         cursor.execute(f"""
-            SELECT email, fname, lname, url, position, phone, mobile, fax, company, address,
-                   city, zip, country, urlcontactform, linkedin, image, mx, emailgeneric,
-                   usergeneric, syntaxeemail, sourcefile
+            SELECT {CONTACT_COLUMNS_SQL}
             FROM Gcontact WHERE email IN ({placeholders})
         """, emails)
         rows = cursor.fetchall()
@@ -494,27 +528,26 @@ def batch_create_contacts(contacts_list: List[Tuple]) -> Tuple[int, int]:
         
         # Insert new contacts
         if new_contacts:
-            cursor.executemany("""
-                INSERT INTO Gcontact
-                (email, fname, lname, url, position, phone, mobile, fax, company, address,
-                 city, zip, country, urlcontactform, linkedin, image, mx, emailgeneric,
-                 usergeneric, syntaxeemail, sourcefile)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, new_contacts)
+            cursor.executemany(
+                f"INSERT INTO Gcontact ({CONTACT_COLUMNS_SQL}) VALUES ({CONTACT_VALUES_SQL})",
+                new_contacts,
+            )
             inserted_count = len(new_contacts)
         
         # Update existing contacts
         if contacts_to_update:
             cursor.executemany("""
                 UPDATE Gcontact
-                SET fname=%s, lname=%s, url=%s, position=%s, phone=%s, mobile=%s, fax=%s,
-                    company=%s, address=%s, city=%s, zip=%s, country=%s, urlcontactform=%s,
+                SET fullname=%s, fname=%s, lname=%s, url=%s, position=%s, phone=%s, mobile=%s, fax=%s,
+                    name=%s, address=%s, city=%s, zip=%s, country=%s, urlcontactform=%s,
                     linkedin=%s, image=%s, mx=%s, emailgeneric=%s, usergeneric=%s,
-                    syntaxeemail=%s, sourcefile=%s
+                    syntaxeemail=%s, sourcefile=%s, CA=%s, activite=%s
                 WHERE email=%s
             """, [
-                (c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], c[12],
-                 c[13], c[14], c[15], c[16], c[17], c[18], c[19], c[20], c[0])
+                (
+                    c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], c[12],
+                    c[13], c[14], c[15], c[16], c[17], c[18], c[19], c[20], c[21], c[22], c[23], c[0],
+                )
                 for c in contacts_to_update
             ])
             updated_count = len(contacts_to_update)
@@ -551,14 +584,16 @@ def batch_update_contacts(contacts_list: List[Tuple]) -> int:
     try:
         cursor.executemany("""
             UPDATE Gcontact
-            SET fname=%s, lname=%s, url=%s, position=%s, phone=%s, mobile=%s, fax=%s,
-                company=%s, address=%s, city=%s, zip=%s, country=%s, urlcontactform=%s,
+            SET fullname=%s, fname=%s, lname=%s, url=%s, position=%s, phone=%s, mobile=%s, fax=%s,
+                name=%s, address=%s, city=%s, zip=%s, country=%s, urlcontactform=%s,
                 linkedin=%s, image=%s, mx=%s, emailgeneric=%s, usergeneric=%s,
-                syntaxeemail=%s, sourcefile=%s
+                syntaxeemail=%s, sourcefile=%s, CA=%s, activite=%s
             WHERE email=%s
         """, [
-            (c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], c[12],
-             c[13], c[14], c[15], c[16], c[17], c[18], c[19], c[20], c[0])
+            (
+                c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], c[12],
+                c[13], c[14], c[15], c[16], c[17], c[18], c[19], c[20], c[21], c[22], c[23], c[0],
+            )
             for c in contacts_list
         ])
         conn.commit()
