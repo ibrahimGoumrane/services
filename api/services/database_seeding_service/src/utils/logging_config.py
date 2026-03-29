@@ -17,6 +17,9 @@ _BATCH_RE = re.compile(
     re.IGNORECASE,
 )
 
+_START_RE = re.compile(r"^SEED_START\b")
+_END_RE = re.compile(r"^SEED_END\b")
+
 
 class WebSocketLogHandler(logging.Handler):
     """Forward logs and progress updates to WebSocket subscribers for a specific job."""
@@ -36,29 +39,30 @@ class WebSocketLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            # Always emit the log line first
-            self._send({
-                "type": "logs",
-                "message": self.format(record),
-                "level": record.levelname,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-
-            # Emit progress only for batch-completion log lines.
             message = record.getMessage()
-
             batch_match = _BATCH_RE.search(message)
+
+            # Forward only high-level lifecycle and batch logs to keep websocket output concise.
+            if _START_RE.search(message) or _END_RE.search(message) or batch_match:
+                self._send({
+                    "type": "logs",
+                    "message": self.format(record),
+                    "level": record.levelname,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+
+            # Emit structured progress only for batch-completion log lines.
             if batch_match:
                 self._progress["inserted"] += int(batch_match.group(1))
                 self._progress["updated"] += int(batch_match.group(2))
                 self._progress["processed"] = max(self._progress["processed"], int(batch_match.group(3)))
                 self._send({
                     "type": "progress",
-                    "payload": self._progress.copy(),
+                    "payload": {
+                        **self._progress,
+                        "total": int(batch_match.group(4)),
+                    },
                 })
-
-            if record.levelno >= logging.ERROR:
-                self._progress["errors"] += 1
 
         except Exception:
             print("Failed to send log record to WebSocket subscribers", flush=True)

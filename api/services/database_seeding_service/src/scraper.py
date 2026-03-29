@@ -44,18 +44,15 @@ def process_database_seeding(
     global logger
     logger = setup_logging(module_name="dbSeeder", job_id=job_id)
 
-    logger.info("=" * 80)
-    logger.info("STARTING DATABASE SEEDING PROCESS")
-    logger.info("=" * 80)
-    logger.info(f"CSV File: {config.csv_file_path}")
-    if job_id:
-        logger.info(f"Job ID: {job_id}")
-    logger.info(f"CSV Separator: '{config.csv_separator}'")
-    logger.info(f"Batch Size: {config.batch_size}")
-    logger.info(f"Web Scraping: {'Enabled' if config.enable_web_scraping else 'Disabled'}")
-    if config.enable_web_scraping:
-        logger.info(f"Google Search: {'Enabled' if not config.skip_google_search else 'Disabled'}")
-    logger.info("=" * 80)
+    logger.info(
+        "SEED_START "
+        f"job_id={job_id or 'none'} "
+        f"csv='{config.csv_file_path}' "
+        f"separator='{config.csv_separator}' "
+        f"batch_size={config.batch_size} "
+        f"web_scraping={'on' if config.enable_web_scraping else 'off'} "
+        f"google_search={'on' if (config.enable_web_scraping and not config.skip_google_search) else 'off'}"
+    )
 
     stats: Dict[str, Any] = {
         "total_rows": 0,
@@ -79,7 +76,7 @@ def process_database_seeding(
         "contact_form_discoveries": 0,
     }
 
-    logger.info(f"Loading CSV from {config.csv_file_path}...")
+    logger.debug(f"Loading CSV from {config.csv_file_path}...")
     try:
         contacts_df = pd.read_csv(
             config.csv_file_path,
@@ -88,13 +85,13 @@ def process_database_seeding(
             encoding="utf-8",
         )
         stats["total_rows"] = len(contacts_df)
-        logger.info(f"Loaded {stats['total_rows']} contacts")
+        logger.debug(f"Loaded {stats['total_rows']} contacts")
     except Exception as exc:
         logger.error(f"Failed to load CSV: {exc}")
         stats["errors"].append(f"CSV loading failed: {exc}")
         return stats
 
-    logger.info("Loading reference data from database...")
+    logger.debug("Loading reference data from database...")
     try:
         generic_domains = set(contact_repository.get_all_generic_domains())
         generic_users = set(contact_repository.get_all_generic_users())
@@ -116,15 +113,15 @@ def process_database_seeding(
 
     validator: Optional[WebsiteEmailValidator] = None
     if config.enable_web_scraping:
-        logger.info("Setting up NoDriver browser for web enrichment...")
+        logger.debug("Setting up NoDriver browser for web enrichment...")
         try:
             validator = WebsiteEmailValidator(skip_website_search=config.skip_google_search)
             validator.setup_driver()
             validator.setup_email_filters()
-            logger.info("NoDriver browser ready")
+            logger.debug("NoDriver browser ready")
         except Exception as exc:
             logger.error(f"Failed to setup NoDriver: {exc}")
-            logger.warning("Continuing WITHOUT web scraping")
+            logger.debug("Continuing WITHOUT web scraping")
             validator = None
 
     contact_batch: List[Tuple] = []
@@ -135,21 +132,12 @@ def process_database_seeding(
     try:
         for _, row in contacts_df.iterrows():
             if job_id and job_store.is_job_cancelled(job_id):
-                logger.warning(f"Job {job_id} received shutdown signal, stopping gracefully...")
+                logger.debug(f"Job {job_id} received shutdown signal, stopping gracefully...")
                 break
 
             stats["processed"] += 1
-            row_number = stats["processed"]
 
             try:
-                # Log row processing start
-                csv_email = data_transformers.get_mapped_value(row, config.csv_mapping.get("email")) or ""
-                csv_company = data_transformers.get_mapped_value(row, config.csv_mapping.get("company")) or ""
-                csv_name = data_transformers.get_mapped_value(row, config.csv_mapping.get("name")) or ""
-                csv_website = data_transformers.get_mapped_value(row, config.csv_mapping.get("url")) or ""
-                
-                logger.info(f"[Row {row_number}] Processing: name='{csv_name}', company='{csv_company}', email='{csv_email}', website='{csv_website}'")
-                
                 contact_data, row_stats = _process_contact_row(
                     row=row,
                     generic_domains=generic_domains,
@@ -184,17 +172,14 @@ def process_database_seeding(
 
                 if contact_data is not None:
                     contact_batch.append(contact_data)
-                    logger.info(f"[Row {row_number}] ✓ Contact created: email={contact_data[0]}, website={contact_data[3]}, mx={contact_data[17]}")
 
                     original_email = data_transformers.get_mapped_value(row, config.csv_mapping.get("email"))
                     original_website = data_transformers.get_mapped_value(row, config.csv_mapping.get("url"))
 
                     if not original_email and contact_data[0] and "@" in contact_data[0]:
                         stats["emails_found"] += 1
-                        logger.info(f"[Row {row_number}]   → Email found via web scraping")
                     if not original_website and contact_data[3]:
                         stats["websites_found"] += 1
-                        logger.info(f"[Row {row_number}]   → Website resolved via enrichment")
                 else:
                     stats["mx_failed"] += 1
                     stats["skipped"] += 1
@@ -206,13 +191,10 @@ def process_database_seeding(
                     has_required = bool(csv_name or csv_company or csv_email)
                     if not has_required:
                         stats["rows_skipped_no_required_field"] += 1
-                        logger.warning(f"[Row {row_number}] ✗ Skipped: No required field (name/company/email)")
                     elif csv_email:
                         stats["rows_skipped_invalid_mx"] += 1
-                        logger.warning(f"[Row {row_number}] ✗ Skipped: Invalid MX record for email domain")
                     else:
                         stats["rows_skipped_no_email_found"] += 1
-                        logger.warning(f"[Row {row_number}] ✗ Skipped: No email found after enrichment")
 
                 if len(contact_batch) >= config.batch_size or stats["processed"] == stats["total_rows"]:
                     _insert_batch(
@@ -227,7 +209,7 @@ def process_database_seeding(
                     new_mx_records.clear()
 
             except Exception as exc:
-                logger.error(f"Error processing row {stats['processed']}: {exc}")
+                logger.debug(f"Error processing row {stats['processed']}: {exc}")
                 stats["errors"].append(f"Row {stats['processed']}: {exc}")
                 continue
 
@@ -235,36 +217,25 @@ def process_database_seeding(
         if job_id:
             job_store.cleanup_cancel_flag(job_id)
         if validator:
-            logger.info("Closing NoDriver browser...")
+            logger.debug("Closing NoDriver browser...")
             try:
                 validator.quit()
             except Exception:
                 pass
 
     elapsed = time.time() - start_time
-    logger.info("=" * 80)
-    logger.info("DATABASE SEEDING COMPLETE")
-    logger.info(f"Total Rows: {stats['total_rows']}")
-    logger.info(f"Processed: {stats['processed']}")
-    logger.info(f"Inserted: {stats['inserted']}")
-    logger.info(f"Updated: {stats['updated']}")
-    logger.info(f"Skipped (No MX): {stats['mx_failed']}")
-    logger.info(f"Skipped - No Required Field: {stats['rows_skipped_no_required_field']}")
-    logger.info(f"Skipped - Invalid MX: {stats['rows_skipped_invalid_mx']}")
-    logger.info(f"Skipped - No Email Found: {stats['rows_skipped_no_email_found']}")
-    logger.info(f"Emails Found (Web): {stats['emails_found']}")
-    logger.info(f"Websites Resolved: {stats['websites_found']}")
-    logger.info(f"Google Search Attempts: {stats['google_search_attempts']}")
-    logger.info(f"Google Search Successes: {stats['google_search_successes']}")
-    logger.info(f"Domain Derivation Attempts: {stats['domain_derivation_attempts']}")
-    logger.info(f"Domain Derivation Successes: {stats['domain_derivation_successes']}")
-    logger.info(f"Website Scraping Attempts: {stats['website_scraping_attempts']}")
-    logger.info(f"Website Scraping Successes: {stats['website_scraping_successes']}")
-    logger.info(f"Contact Form Discoveries: {stats['contact_form_discoveries']}")
-    logger.info(f"Time Elapsed: {data_transformers.format_eta(elapsed)}")
+    logger.info(
+        "SEED_END "
+        f"processed={stats['processed']} "
+        f"total={stats['total_rows']} "
+        f"inserted={stats['inserted']} "
+        f"updated={stats['updated']} "
+        f"skipped={stats['skipped']} "
+        f"errors={len(stats['errors'])} "
+        f"elapsed={data_transformers.format_eta(elapsed)}"
+    )
     if stats["errors"]:
-        logger.warning(f"Errors: {len(stats['errors'])}")
-    logger.info("=" * 80)
+        logger.debug(f"Errors: {len(stats['errors'])}")
 
     return stats
 
@@ -371,7 +342,7 @@ def _process_contact_row(
 
             # Check CSV-provided website against not-visiting domains first
             if enriched_website and _is_not_visiting_domain(enriched_website, not_visiting_domains):
-                logger.info(f"   → Skipping not-visiting domain (CSV input): {enriched_website}")
+                logger.debug(f"   → Skipping not-visiting domain (CSV input): {enriched_website}")
                 enriched_website = ""
 
             if enriched_website and not validator.validate_website(enriched_website):
@@ -381,49 +352,49 @@ def _process_contact_row(
             # Google search is ONLY for rows where client did not provide website input.
             if (not row_has_website_input) and (not enriched_website) and (not validator.skip_website_search) and search_seed:
                 row_stats["google_search_attempt"] = True
-                logger.info(f"   → Attempting Google search with seed='{search_seed}', location='{location}'")
+                logger.debug(f"   → Attempting Google search with seed='{search_seed}', location='{location}'")
                 google_result, _ = validator.google_search_business(search_seed, location=location)
                 if google_result and _is_not_visiting_domain(google_result, not_visiting_domains):
-                    logger.info(f"   → Google result skipped (not-visiting domain): {google_result}")
+                    logger.debug(f"   → Google result skipped (not-visiting domain): {google_result}")
                 elif google_result and validator.validate_website(google_result):
                     enriched_website = google_result
                     row_stats["google_search_success"] = True
-                    logger.info(f"   → Google search SUCCESS: found website '{google_result}'")
+                    logger.debug(f"   → Google search SUCCESS: found website '{google_result}'")
                 else:
-                    logger.info(f"   → Google search failed: no valid website found")
+                    logger.debug("   → Google search failed: no valid website found")
 
             # If Google did not help, try deriving URL from email domain and validate it.
             if not enriched_website and csv_email_domain and csv_email_domain not in GENERIC_EMAIL_PROVIDER_DOMAINS:
                 row_stats["domain_derivation_attempt"] = True
                 candidate_url = f"https://{csv_email_domain}"
                 if _is_not_visiting_domain(candidate_url, not_visiting_domains):
-                    logger.info(f"   → Domain derivation skipped (not-visiting domain): {candidate_url}")
+                    logger.debug(f"   → Domain derivation skipped (not-visiting domain): {candidate_url}")
                 else:
-                    logger.info(f"   → Attempting domain derivation: trying '{candidate_url}'")
+                    logger.debug(f"   → Attempting domain derivation: trying '{candidate_url}'")
                     if validator.validate_website(candidate_url):
                         enriched_website = candidate_url
                         row_stats["domain_derivation_success"] = True
-                        logger.info(f"   → Domain derivation SUCCESS: website '{candidate_url}' is valid")
+                        logger.debug(f"   → Domain derivation SUCCESS: website '{candidate_url}' is valid")
                     else:
-                        logger.info(f"   → Domain derivation failed: website '{candidate_url}' is not valid")
+                        logger.debug(f"   → Domain derivation failed: website '{candidate_url}' is not valid")
 
             # Shared enrichment phase:
             # if web scraping is enabled and we have a website (provided or discovered),
             # use it to enrich missing fields.
             if enriched_website:
-                logger.info(f"   → Running website enrichment on: '{enriched_website}'")
+                logger.debug(f"   → Running website enrichment on: '{enriched_website}'")
 
                 if not enriched_email:
                     row_stats["website_scraping_attempt"] = True
-                    logger.info(f"   → Looking for email on website...")
+                    logger.debug("   → Looking for email on website...")
                     found_emails = validator.find_email_on_website(enriched_website) or []
                     filtered = validator.filter_emails(found_emails)
                     if filtered:
                         enriched_email = filtered[0].strip().lower()
                         row_stats["website_scraping_success"] = True
-                        logger.info(f"   → Website scraping SUCCESS: found email '{enriched_email}'")
+                        logger.debug(f"   → Website scraping SUCCESS: found email '{enriched_email}'")
                     else:
-                        logger.info(f"   → Website scraping failed: no valid email found on website")
+                        logger.debug("   → Website scraping failed: no valid email found on website")
 
                 if not contact_form_url:
                     try:
@@ -431,32 +402,30 @@ def _process_contact_row(
                         if contact_form:
                             contact_form_url = contact_form
                             row_stats["contact_form_found"] = True
-                            logger.info(f"   → Contact form found: '{contact_form}'")
+                            logger.debug(f"   → Contact form found: '{contact_form}'")
                     except Exception:
                         pass
 
         except Exception as exc:
-            logger.warning(f"Web enrichment error: {exc}")
+            logger.debug(f"Web enrichment error: {exc}")
 
     if not enriched_email or "@" not in enriched_email:
-        logger.info(f"   → Skipped: no valid email after enrichment")
+        logger.debug("   → Skipped: no valid email after enrichment")
         return None, row_stats
 
     _, domain = enriched_email.split("@", 1)
     domain = domain.strip().lower()
     if not domain:
-        logger.info(f"   → Skipped: empty email domain")
+        logger.debug("   → Skipped: empty email domain")
         return None, row_stats
 
     try:
         mx_host, mx_root = mx_resolver.resolve_mx_record(domain, mx_cache, new_mx_records)
         if not mx_host:
-            logger.info(f"   → Skipped: no valid MX record for domain '{domain}'")
+            logger.debug(f"   → Skipped: no valid MX record for domain '{domain}'")
             return None, row_stats
-        else:
-            logger.info(f"   → MX validation passed: '{mx_host}'")
     except Exception as exc:
-        logger.warning(f"MX resolution error for {domain}: {exc}")
+        logger.debug(f"MX resolution error for {domain}: {exc}")
         return None, row_stats
 
     is_generic_email, is_user_generic = email_classifiers.classify_email(
@@ -484,7 +453,7 @@ def _process_contact_row(
     urlcontactform = contact_form_url or data_transformers.get_mapped_value(row, csv_mapping.get("urlcontactform"))
     row_sourcefile = data_transformers.get_mapped_value(row, csv_mapping.get("sourcefile")) or sourcefile
 
-    logger.info(f"   → Email classification: is_generic={is_generic_email}, is_user_generic={is_user_generic}")
+    logger.debug(f"   → Email classification: is_generic={is_generic_email}, is_user_generic={is_user_generic}")
 
     contact_tuple = (
         enriched_email,
@@ -526,7 +495,7 @@ def _insert_batch(
         if new_mx_records:
             try:
                 mx_inserted = contact_repository.batch_create_mxrecords(new_mx_records)
-                logger.info(f"Batch inserted {mx_inserted} MX records")
+                logger.debug(f"Batch inserted {mx_inserted} MX records")
             except Exception as exc:
                 logger.error(f"Failed to insert MX records: {exc}")
 
