@@ -67,7 +67,6 @@ class EmailValidator:
                 generic_users=self.generic_users,
                 generic_mx=set(),
                 site_builder_domains=self.site_builder_domains,
-                mx_root=None
             )
             
             # Skip if email matches any generic criteria.
@@ -108,6 +107,5 @@ class EmailValidator:
             generic_users=self.generic_users,
             generic_mx=set(),
             site_builder_domains=self.site_builder_domains,
-            mx_root=None
         )
         return bool(is_generic)

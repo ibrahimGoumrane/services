@@ -357,23 +357,37 @@ def _process_contact_row(
         logger.info("Skipped: empty email domain")
         return None, row_stats
 
-    try:
-        mx_host, mx_root = mx_resolver.resolve_mx_record(domain, mx_cache, new_mx_records)
-        if not mx_host:
-            logger.info(f"Skipped: no valid MX record for domain '{domain}'")
-            return None, row_stats
-    except Exception as exc:
-        logger.warning(f"MX resolution error for {domain}: {exc}")
-        return None, row_stats
-
     is_generic_email, is_user_generic = email_classifiers.classify_email(
         enriched_email,
         generic_domains,
         generic_users,
         generic_mx,
         site_builder_domains,
-        mx_root,
     )
+
+    mx_host = None
+    mx_root = None
+
+    if not is_generic_email:
+        try:
+            mx_host, mx_root = mx_resolver.resolve_mx_record(domain, mx_cache, new_mx_records)
+            if not mx_host:
+                logger.info(f"Skipped: no valid MX record for domain '{domain}'")
+                return None, row_stats
+        except Exception as exc:
+            logger.warning(f"MX resolution error for {domain}: {exc}")
+            return None, row_stats
+
+        if mx_root:
+            mx_root_email = f"mx@{mx_root}"
+            mx_is_generic, _ = email_classifiers.classify_email(
+                mx_root_email,
+                generic_domains=set(),
+                generic_users=set(),
+                generic_mx=generic_mx,
+                site_builder_domains=site_builder_domains,
+            )
+            is_generic_email = bool(is_generic_email or mx_is_generic)
 
     fullname = csv_fullname or None
     fname = csv_fname
