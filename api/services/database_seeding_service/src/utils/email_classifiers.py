@@ -39,8 +39,8 @@ def classify_email(
     mx_is_generic = domain_part in generic_mx
     domain_is_site_builder = domain_part in site_builder_domains
     
-    # Email is generic if ANY criteria is true
-    is_generic_email = domain_is_generic or user_is_generic or mx_is_generic or domain_is_site_builder
+    # Email is generic only when the domain, MX, or site-builder rules match.
+    is_generic_email = domain_is_generic or mx_is_generic or domain_is_site_builder
     
     if is_generic_email:
         logger.debug(f"Generic email detected: {email}")

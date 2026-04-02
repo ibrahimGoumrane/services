@@ -9,7 +9,7 @@ from api.services.utils.job_manager import job_store
 
 from .models import ProcessingConfig
 from .utils import contact_repository, data_transformers, email_classifiers, mx_resolver
-from .utils.logging_config import get_logger, setup_logging
+from .utils.logging_config import flush_buffered_log_handlers, get_logger, setup_logging
 from .utils.tld_country_mapper import get_country_from_email_domain
 from .utils.website_validator import WebsiteEmailValidator
 
@@ -27,7 +27,7 @@ def process_database_seeding(
     Returns processing statistics.
     """
     global logger
-    logger = setup_logging(module_name="dbSeeder", job_id=job_id)
+    logger = setup_logging(module_name="dbSeeder", job_id=job_id, buffer_size=config.batch_size)
 
     logger.info(
         "SEED_START "
@@ -185,6 +185,7 @@ def process_database_seeding(
                         total_rows=stats["total_rows"],
                         processed=stats["processed"],
                     )
+                    flush_buffered_log_handlers(logger)
                     contact_batch.clear()
                     new_mx_records.clear()
 
@@ -216,6 +217,8 @@ def process_database_seeding(
     )
     if stats["errors"]:
         logger.info(f"Errors: {len(stats['errors'])}")
+
+    flush_buffered_log_handlers(logger)
 
     return stats
 

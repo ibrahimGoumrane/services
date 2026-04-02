@@ -8,6 +8,17 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,fr;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
+
 
 DOWNLOADABLE_FILE_EXTENSIONS = (
     ".pdf",
@@ -141,7 +152,7 @@ def validate_website_http(
         return False
 
     try:
-        response = requests.get(url, timeout=timeout, allow_redirects=True)
+        response = requests.get(url, timeout=timeout, allow_redirects=True, headers=_DEFAULT_HEADERS)
 
         final_url = response.url or url
         if excluded_domains and is_excluded_domain(final_url, excluded_domains):
@@ -159,6 +170,8 @@ def validate_website_http(
             return False
         
         if response.status_code == 200:
+            if final_url != url:
+                logger.info(f"✓ Website accessible after redirect: {url} -> {final_url}")
             logger.info(f"✓ Website accessible: {url}")
             return True
         else:

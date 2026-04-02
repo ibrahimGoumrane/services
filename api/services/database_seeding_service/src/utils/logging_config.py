@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from typing import List
 
 from api.services.utils.ws_manager import ws_manager
 
@@ -68,10 +69,47 @@ class WebSocketLogHandler(logging.Handler):
             print("Failed to send log record to WebSocket subscribers", flush=True)
 
 
+class BufferedFileHandler(logging.Handler):
+    """Buffer formatted log lines and append them to disk in batches."""
+
+    def __init__(self, file_path: str, buffer_size: int = 1) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.file_path = file_path
+        self._buffer: List[str] = []
+        self.setFormatter(_FORMATTER)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self._buffer.append(self.format(record))
+        except Exception:
+            self.handleError(record)
+
+    def flush(self) -> None:
+        if not self._buffer:
+            return
+
+        try:
+            os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
+            with open(self.file_path, "a", encoding="utf-8") as file_handle:
+                file_handle.write("\n".join(self._buffer))
+                file_handle.write("\n")
+            self._buffer.clear()
+        except Exception:
+            pass
+
+
+def flush_buffered_log_handlers(logger: logging.Logger) -> None:
+    """Flush buffered file handlers attached to a logger."""
+    for handler in logger.handlers:
+        if isinstance(handler, BufferedFileHandler):
+            handler.flush()
+
+
 def setup_logging(
     log_dir: str = "logs",
     module_name: str = "__main__",
     job_id: str | None = None,
+    buffer_size: int = 1,
 ) -> logging.Logger:
     """Set up and return a configured logger with file output."""
     os.makedirs(log_dir, exist_ok=True)
@@ -84,11 +122,10 @@ def setup_logging(
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     prefix = f"{module_name}_{job_id}" if job_id else module_name
-    file_handler = logging.FileHandler(
-        os.path.join(log_dir, f"{prefix}_{timestamp}.log"), encoding="utf-8"
+    file_handler = BufferedFileHandler(
+        os.path.join(log_dir, f"{prefix}_{timestamp}.log"),
+        buffer_size=buffer_size,
     )
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(_FORMATTER)
     file_handler._tag = "file"
     logger.addHandler(file_handler)
 
