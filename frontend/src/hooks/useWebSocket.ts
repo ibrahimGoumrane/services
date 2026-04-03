@@ -15,6 +15,7 @@ function isJobStatus(value: unknown): value is JobStatus {
   return (
     value === "queued" ||
     value === "running" ||
+    value === "paused" ||
     value === "completed" ||
     value === "failed"
   );
@@ -138,7 +139,9 @@ export function useWebSocket(jobId: string | null) {
   const [isConnected, setIsConnected] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const connect = useCallback(() => {
     if (!jobId) return;
@@ -170,6 +173,9 @@ export function useWebSocket(jobId: string | null) {
             break;
           case "started":
             setStatus("running");
+            break;
+          case "paused":
+            setStatus("paused");
             break;
           case "stream":
             if (isLogStreamData(data)) {
@@ -218,7 +224,11 @@ export function useWebSocket(jobId: string | null) {
     ws.onclose = () => {
       setIsConnected(false);
       // Auto-reconnect if not in a terminal state
-      if (status !== "completed" && status !== "failed") {
+      if (
+        status !== "completed" &&
+        status !== "failed" &&
+        status !== "paused"
+      ) {
         reconnectTimeoutRef.current = setTimeout(connect, 3000);
       }
     };

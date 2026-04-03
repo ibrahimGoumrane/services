@@ -76,7 +76,9 @@ export function App() {
   const trackedJobs = useMemo(
     () =>
       jobs.filter((job) =>
-        ["queued", "running", "completed", "failed"].includes(job.status),
+        ["queued", "running", "paused", "completed", "failed"].includes(
+          job.status,
+        ),
       ),
     [jobs],
   );
@@ -196,6 +198,12 @@ export function App() {
                           ? new Date(job.created_at).toLocaleTimeString()
                           : ""}
                       </span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {typeof job.current_row === "number" &&
+                      typeof job.total_rows === "number"
+                        ? `Row ${Math.max(1, job.current_row)} / ${Math.max(0, job.total_rows)}`
+                        : "Progress unavailable"}
                     </div>
                   </button>
                 ))}

@@ -111,6 +111,44 @@ async def create_job(
     return CreateJobResponse(job_id=job.job_id, status=job.status)
 
 
+@router.post("/jobs/{job_id}/pause", response_model=JobStatusResponse)
+async def pause_job(job_id: str) -> JobStatusResponse:
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    job_store.request_job_pause(job_id)
+    paused_job = job_store.update_status(job_id, "paused")
+    if paused_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    await ws_manager.send_event(job_id, "paused", paused_job.to_dict())
+    return JobStatusResponse(**paused_job.to_dict())
+
+
+@router.post("/jobs/{job_id}/resume", response_model=JobStatusResponse)
+async def resume_job(job_id: str) -> JobStatusResponse:
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.status != "paused":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only paused jobs can be resumed")
+
+    job_store.cleanup_pause_flag(job_id)
+    queued_job = job_store.update_status(job_id, "queued")
+    if queued_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    await ws_manager.send_event(job_id, "queued", queued_job.to_dict())
+    asyncio.create_task(run_seed_job(job_id))
+    return JobStatusResponse(**queued_job.to_dict())
+
+
+@router.post("/jobs/{job_id}/stop", response_model=JobStatusResponse)
+async def stop_job(job_id: str) -> JobStatusResponse:
+    return await pause_job(job_id)
+
+
 @router.get("/jobs", response_model=list[JobStatusResponse])
 async def list_jobs() -> list[JobStatusResponse]:
     jobs = job_store.list_jobs()

@@ -9,3 +9,4 @@ dist/
 *.csv
 docs/
 test-data/
+tmp/

@@ -94,6 +94,17 @@ def process_database_seeding(
         stats["errors"].append(f"Reference data loading failed: {exc}")
         return stats
 
+    start_row = 1
+    if job_id:
+        existing_job = job_store.get_job(job_id)
+        if existing_job is not None and existing_job.current_row > 1:
+            start_row = existing_job.current_row
+            stats["processed"] = int(existing_job.result.get("processed", 0)) if existing_job.result else 0
+            stats["inserted"] = int(existing_job.result.get("inserted", 0)) if existing_job.result else 0
+            stats["updated"] = int(existing_job.result.get("updated", 0)) if existing_job.result else 0
+            stats["skipped"] = int(existing_job.result.get("skipped", 0)) if existing_job.result else 0
+            logger.info(f"Loaded job progress for {job_id}: resume from row {start_row}")
+
     validator: Optional[WebsiteEmailValidator] = None
     if config.enable_web_scraping:
         logger.info("Setting up NoDriver browser for web enrichment...")
@@ -113,10 +124,25 @@ def process_database_seeding(
     start_time = time.time()
 
     try:
-        for _, row in contacts_df.iterrows():
+        for row_number, (_, row) in enumerate(contacts_df.iterrows(), start=1):
+            if row_number < start_row:
+                continue
+
             if job_id and job_store.is_job_cancelled(job_id):
                 logger.info(f"Job {job_id} received shutdown signal, stopping gracefully...")
                 break
+
+            if job_id and job_store.is_job_pause_requested(job_id):
+                logger.info(f"Job {job_id} pause requested, stopping at checkpoint row {row_number}")
+                job_store.update_progress(
+                    job_id,
+                    current_row=row_number,
+                    total_rows=stats["total_rows"],
+                    result=stats,
+                )
+                job_store.update_status(job_id, "paused", result=stats)
+                flush_buffered_log_handlers(logger)
+                return stats
 
             stats["processed"] += 1
 
@@ -185,6 +211,13 @@ def process_database_seeding(
                         total_rows=stats["total_rows"],
                         processed=stats["processed"],
                     )
+                    if job_id:
+                        job_store.update_progress(
+                            job_id,
+                            current_row=row_number + 1,
+                            total_rows=stats["total_rows"],
+                            result=stats,
+                        )
                     flush_buffered_log_handlers(logger)
                     contact_batch.clear()
                     new_mx_records.clear()
@@ -217,6 +250,22 @@ def process_database_seeding(
     )
     if stats["errors"]:
         logger.info(f"Errors: {len(stats['errors'])}")
+
+    if job_id:
+        if job_store.get_job(job_id) and job_store.get_job(job_id).status == "paused":
+            job_store.update_progress(
+                job_id,
+                current_row=stats["processed"] + 1,
+                total_rows=stats["total_rows"],
+                result=stats,
+            )
+        elif stats["processed"] >= stats["total_rows"]:
+            job_store.update_progress(
+                job_id,
+                current_row=stats["total_rows"] + 1,
+                total_rows=stats["total_rows"],
+                result=stats,
+            )
 
     flush_buffered_log_handlers(logger)
 

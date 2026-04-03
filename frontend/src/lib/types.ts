@@ -1,4 +1,9 @@
-export type JobStatus = "queued" | "running" | "completed" | "failed";
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed";
 
 export interface JobResponse {
   job_id: string;
@@ -39,7 +44,14 @@ export interface LogEntry {
 }
 
 export interface WSEvent {
-  type: "snapshot" | "queued" | "started" | "stream" | "completed" | "failed";
+  type:
+    | "snapshot"
+    | "queued"
+    | "started"
+    | "stream"
+    | "paused"
+    | "completed"
+    | "failed";
   data: Record<string, unknown>;
 }
 
@@ -78,5 +90,8 @@ export interface JobSnapshot {
   error?: string | null;
   created_at: string;
   started_at?: string | null;
+  paused_at?: string | null;
   completed_at?: string | null;
+  current_row?: number;
+  total_rows?: number;
 }

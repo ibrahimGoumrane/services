@@ -4,7 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-JobStatus = Literal["queued", "running", "completed", "failed"]
+JobStatus = Literal["queued", "running", "paused", "completed", "failed"]
 
 
 @dataclass
@@ -16,7 +16,10 @@ class JobState:
     error: str | None = None
     created_at: str = ""
     started_at: str | None = None
+    paused_at: str | None = None
     completed_at: str | None = None
+    current_row: int = 1
+    total_rows: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -27,7 +30,10 @@ class JobState:
             "error": self.error,
             "created_at": self.created_at,
             "started_at": self.started_at,
+            "paused_at": self.paused_at,
             "completed_at": self.completed_at,
+            "current_row": self.current_row,
+            "total_rows": self.total_rows,
         }
 
 
@@ -76,4 +82,7 @@ class JobStatusResponse(BaseModel):
     error: str | None = None
     created_at: str
     started_at: str | None = None
+    paused_at: str | None = None
     completed_at: str | None = None
+    current_row: int = 1
+    total_rows: int = 0

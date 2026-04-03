@@ -22,7 +22,9 @@ export function useJobPolling(
     error?: string,
   ) => void,
 ) {
-  const pollingIntervalRef = useRef<NodeJS.Timeout>();
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
 
   useEffect(() => {
     // Only poll if we have a job, WS is disconnected, and we aren't in a terminal state
@@ -30,6 +32,7 @@ export function useJobPolling(
       jobId &&
       !isWsConnected &&
       currentStatus !== "completed" &&
+      currentStatus !== "paused" &&
       currentStatus !== "failed";
 
     if (shouldPoll) {

@@ -15,6 +15,10 @@ async def run_seed_job(job_id: str) -> None:
     if job is None:
         return
 
+    if job.status == "paused":
+        await ws_manager.send_event(job_id, "paused", job.to_dict())
+        return
+
     loop = asyncio.get_running_loop()
     seeding_logger = logging.getLogger("dbSeeder")
     seeding_logger.propagate = False
@@ -27,6 +31,11 @@ async def run_seed_job(job_id: str) -> None:
     try:
         config = ProcessingConfig(**job.payload)
         result = await asyncio.to_thread(seed_database, config, job_id)
+        current_job = job_store.get_job(job_id)
+        if current_job is not None and current_job.status == "paused":
+            await ws_manager.send_event(job_id, "paused", current_job.to_dict())
+            return
+
         completed_job = job_store.update_status(job_id, "completed", result=result)
         if completed_job is not None:
             await ws_manager.send_event(job_id, "completed", completed_job.to_dict())
@@ -50,3 +59,4 @@ async def run_seed_job(job_id: str) -> None:
     finally:
         detach_websocket_log_handler(seeding_logger, ws_stream_handler)
         job_store.cleanup_cancel_flag(job_id)
+        job_store.cleanup_pause_flag(job_id)

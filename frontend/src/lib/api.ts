@@ -62,6 +62,33 @@ export async function createJob(
   return data.job_id;
 }
 
+async function postJobAction(
+  jobId: string,
+  action: "pause" | "resume" | "stop",
+): Promise<JobSnapshot> {
+  const response = await fetch(`${BASE_URL}/jobs/${jobId}/${action}`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to ${action} job`);
+  }
+
+  return response.json();
+}
+
+export function pauseJob(jobId: string): Promise<JobSnapshot> {
+  return postJobAction(jobId, "pause");
+}
+
+export function resumeJob(jobId: string): Promise<JobSnapshot> {
+  return postJobAction(jobId, "resume");
+}
+
+export function stopJob(jobId: string): Promise<JobSnapshot> {
+  return postJobAction(jobId, "stop");
+}
+
 export async function fetchJobStatus(jobId: string): Promise<JobSnapshot> {
   const response = await fetch(`${BASE_URL}/jobs/${jobId}`);
 

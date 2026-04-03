@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useJobPolling } from "../hooks/useJobPolling";
 import { JobStatus, JobMetrics, LogEntry } from "../lib/types";
+import { pauseJob, resumeJob } from "../lib/api";
 import {
   Loader2,
   CheckCircle2,
@@ -9,6 +10,8 @@ import {
   Clock,
   Terminal,
   Activity,
+  Pause,
+  Play,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 interface ProcessingStepProps {
@@ -20,7 +23,7 @@ interface ProcessingStepProps {
     logs?: LogEntry[],
   ) => void;
 }
-const STATUS_ORDER = ["queued", "running", "completed"];
+const STATUS_ORDER = ["queued", "running", "paused", "completed"];
 const containerVariants = {
   hidden: {
     opacity: 0,
@@ -45,6 +48,8 @@ const itemVariants = {
 export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
   const { status, logs, metrics, error, isConnected } = useWebSocket(jobId);
   const logsEndRef = useRef<HTMLDivElement>(null);
+  const isPaused = status === "paused";
+  const isActive = status === "queued" || status === "running";
   const handlePollingUpdate = (
     polledStatus: JobStatus,
     polledMetrics?: JobMetrics,
@@ -134,6 +139,29 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
         </div>
       </motion.div>
 
+      <motion.div variants={itemVariants} className="flex flex-wrap gap-3">
+        {isActive && !isPaused && (
+          <button
+            type="button"
+            onClick={() => void pauseJob(jobId)}
+            className="inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-300 transition hover:bg-amber-500/20"
+          >
+            <Pause className="h-4 w-4" />
+            Stop
+          </button>
+        )}
+        {isPaused && (
+          <button
+            type="button"
+            onClick={() => void resumeJob(jobId)}
+            className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
+          >
+            <Play className="h-4 w-4" />
+            Resume
+          </button>
+        )}
+      </motion.div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Timeline & Metrics */}
         <div className="flex flex-col gap-8">
@@ -145,47 +173,54 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
               <Activity className="w-4 h-4 text-violet-400" /> Status
             </h3>
             <div className="flex flex-col gap-6 relative before:absolute before:inset-0 before:ml-[11px] before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-slate-700 before:via-slate-800 before:to-transparent">
-              {["queued", "running", "completed"].map((stepStatus) => {
-                const isActive =
-                  status === stepStatus ||
-                  (status === "failed" && stepStatus === "running");
-                return (
-                  <div
-                    key={stepStatus}
-                    className="relative flex items-center gap-4 group z-10"
-                  >
+              {["queued", "running", "paused", "completed"].map(
+                (stepStatus) => {
+                  const isActive =
+                    status === stepStatus ||
+                    (status === "failed" && stepStatus === "running");
+                  return (
                     <div
-                      className={`flex items-center justify-center w-6 h-6 rounded-full border-4 border-slate-900 bg-slate-800 shrink-0 transition-colors duration-300
+                      key={stepStatus}
+                      className="relative flex items-center gap-4 group z-10"
+                    >
+                      <div
+                        className={`flex items-center justify-center w-6 h-6 rounded-full border-4 border-slate-900 bg-slate-800 shrink-0 transition-colors duration-300
                       ${isActive ? "border-slate-900 bg-slate-800 shadow-[0_0_10px_rgba(139,92,246,0.3)]" : ""}
                     `}
-                    >
-                      {stepStatus === "completed" && status === "failed" ? (
-                        <Clock className="w-5 h-5 text-slate-600" />
-                      ) : (
-                        getStatusIcon(stepStatus)
-                      )}
-                    </div>
-                    <div
-                      className={`flex-1 p-4 rounded-xl border transition-all duration-300
+                      >
+                        {stepStatus === "completed" && status === "failed" ? (
+                          <Clock className="w-5 h-5 text-slate-600" />
+                        ) : (
+                          getStatusIcon(stepStatus)
+                        )}
+                      </div>
+                      <div
+                        className={`flex-1 p-4 rounded-xl border transition-all duration-300
                       ${isActive ? "bg-slate-800/80 border-slate-600 shadow-lg" : "bg-slate-900/50 border-slate-800/50"}
                     `}
-                    >
-                      <div className="font-semibold text-slate-200 text-sm capitalize">
-                        {stepStatus === "completed" && status === "failed"
-                          ? "Failed"
-                          : stepStatus === "running"
-                            ? "Processing"
-                            : stepStatus}
-                      </div>
-                      <div className="text-xs font-medium text-slate-500 mt-1">
-                        {stepStatus === "queued" && "Job accepted by server"}
-                        {stepStatus === "running" && "Executing seeding tasks"}
-                        {stepStatus === "completed" && "Final job state"}
+                      >
+                        <div className="font-semibold text-slate-200 text-sm capitalize">
+                          {stepStatus === "completed" && status === "failed"
+                            ? "Failed"
+                            : stepStatus === "running"
+                              ? "Processing"
+                              : stepStatus === "paused"
+                                ? "Paused"
+                                : stepStatus}
+                        </div>
+                        <div className="text-xs font-medium text-slate-500 mt-1">
+                          {stepStatus === "queued" && "Job accepted by server"}
+                          {stepStatus === "running" &&
+                            "Executing seeding tasks"}
+                          {stepStatus === "paused" &&
+                            "Paused and ready to resume"}
+                          {stepStatus === "completed" && "Final job state"}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                },
+              )}
             </div>
           </motion.div>
 
