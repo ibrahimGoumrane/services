@@ -16,6 +16,9 @@ from .utils.website_validator import WebsiteEmailValidator
 
 logger = get_logger(__name__)
 
+SITE_TIMEOUT_SECONDS = 30
+PERIODIC_BROWSER_RESTART_BATCHES = 10
+
 
 def process_database_seeding(
     config: ProcessingConfig,
@@ -76,19 +79,7 @@ def process_database_seeding(
 
     logger.info("Loading reference data from database...")
     try:
-        generic_domains = set(contact_repository.get_all_generic_domains())
-        generic_users = set(contact_repository.get_all_generic_users())
-        generic_mx = set(contact_repository.get_all_mxrecords())
-        site_builder_domains = set(contact_repository.get_all_site_builder_domains())
-        not_visiting_domains = set(contact_repository.get_all_not_visiting_domains())
-
-        logger.info(
-            f"Loaded {len(generic_domains)} generic domains, "
-            f"{len(generic_users)} generic users, "
-            f"{len(generic_mx)} generic MX records, "
-            f"{len(site_builder_domains)} site builder domains, "
-            f"{len(not_visiting_domains)} not-visiting domains"
-        )
+        generic_domains, generic_users, generic_mx, site_builder_domains, not_visiting_domains = _load_reference_data()
     except Exception as exc:
         logger.error(f"Failed to load reference data: {exc}")
         stats["errors"].append(f"Reference data loading failed: {exc}")
@@ -109,9 +100,17 @@ def process_database_seeding(
     if config.enable_web_scraping:
         logger.info("Setting up NoDriver browser for web enrichment...")
         try:
-            validator = WebsiteEmailValidator(skip_website_search=config.skip_google_search)
+            validator = WebsiteEmailValidator(
+                skip_website_search=config.skip_google_search,
+                site_timeout_seconds=SITE_TIMEOUT_SECONDS,
+            )
             validator.setup_driver()
-            validator.setup_email_filters()
+            validator.update_reference_filters(
+                generic_domains=generic_domains,
+                generic_users=generic_users,
+                site_builder_domains=site_builder_domains,
+                not_visiting_domains=not_visiting_domains,
+            )
             logger.info("NoDriver browser ready")
         except Exception as exc:
             logger.error(f"Failed to setup NoDriver: {exc}")
@@ -121,6 +120,10 @@ def process_database_seeding(
     contact_batch: List[Tuple] = []
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
     new_mx_records: List[Tuple[str, str, str]] = []
+    batches_processed = 0
+    last_boundary_restart_epoch = 0
+    if validator:
+        last_boundary_restart_epoch = validator.restart_epoch()
     start_time = time.time()
 
     try:
@@ -212,12 +215,64 @@ def process_database_seeding(
                         processed=stats["processed"],
                     )
                     if job_id:
+                        next_checkpoint_row = min(row_number + 1, stats["total_rows"])
                         job_store.update_progress(
                             job_id,
-                            current_row=row_number + 1,
+                            current_row=next_checkpoint_row,
                             total_rows=stats["total_rows"],
                             result=stats,
                         )
+
+                    batches_processed += 1
+                    if validator:
+                        try:
+                            validator.prepare_next_batch()
+                            logger.debug(f"Batch tab cleanup completed for batch {batches_processed}")
+                        except Exception as exc:
+                            logger.debug(f"Batch tab cleanup failed: {exc}")
+
+                        periodic_due = batches_processed % PERIODIC_BROWSER_RESTART_BATCHES == 0
+                        if periodic_due:
+                            if validator.had_health_restart_since(last_boundary_restart_epoch):
+                                logger.debug(
+                                    "Skipping periodic browser restart on this boundary "
+                                    "because a health restart already occurred"
+                                )
+                            else:
+                                try:
+                                    validator.restart_browser(reason="periodic")
+                                    logger.debug(
+                                        f"Periodic browser restart completed at batch {batches_processed}"
+                                    )
+                                except Exception as exc:
+                                    logger.debug(f"Periodic browser restart failed: {exc}")
+
+                        last_boundary_restart_epoch = validator.restart_epoch()
+
+                    try:
+                        (
+                            generic_domains,
+                            generic_users,
+                            generic_mx,
+                            site_builder_domains,
+                            not_visiting_domains,
+                        ) = _load_reference_data(log_prefix="Batch reference refresh")
+
+                        if validator:
+                            validator.update_reference_filters(
+                                generic_domains=generic_domains,
+                                generic_users=generic_users,
+                                site_builder_domains=site_builder_domains,
+                                not_visiting_domains=not_visiting_domains,
+                            )
+                        logger.debug(
+                            f"Batch reference refresh completed for batch {batches_processed}"
+                        )
+                    except Exception as exc:
+                        logger.debug(
+                            f"Failed to refresh reference data after batch {batches_processed}: {exc}"
+                        )
+
                     flush_buffered_log_handlers(logger)
                     contact_batch.clear()
                     new_mx_records.clear()
@@ -262,7 +317,7 @@ def process_database_seeding(
         elif stats["processed"] >= stats["total_rows"]:
             job_store.update_progress(
                 job_id,
-                current_row=stats["total_rows"] + 1,
+                current_row=stats["total_rows"],
                 total_rows=stats["total_rows"],
                 result=stats,
             )
@@ -536,3 +591,35 @@ def _insert_batch(
 
     except Exception as exc:
         logger.error(f"Batch insertion error: {exc}")
+
+
+def _load_reference_data(log_prefix: str = "Loaded") -> tuple[
+    set[str],
+    set[str],
+    set[str],
+    set[str],
+    set[str],
+]:
+    """Fetch all classifier reference sets from DB in one call site."""
+    generic_domains = set(contact_repository.get_all_generic_domains())
+    generic_users = set(contact_repository.get_all_generic_users())
+    generic_mx = set(contact_repository.get_all_mxrecords())
+    site_builder_domains = set(contact_repository.get_all_site_builder_domains())
+    not_visiting_domains = set(contact_repository.get_all_not_visiting_domains())
+
+    logger.debug(
+        f"{log_prefix}: "
+        f"{len(generic_domains)} generic domains, "
+        f"{len(generic_users)} generic users, "
+        f"{len(generic_mx)} generic MX records, "
+        f"{len(site_builder_domains)} site builder domains, "
+        f"{len(not_visiting_domains)} not-visiting domains"
+    )
+
+    return (
+        generic_domains,
+        generic_users,
+        generic_mx,
+        site_builder_domains,
+        not_visiting_domains,
+    )

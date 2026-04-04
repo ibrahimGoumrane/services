@@ -1,5 +1,6 @@
 """NoDriver browser management and page scraping utilities"""
 
+import asyncio
 import logging
 import os
 import random
@@ -33,11 +34,15 @@ class NoDriverDriver:
         self.browser = None
         self.tab = None
         self._loop = None
+        self._restart_epoch = 0
+        self._last_health_restart_epoch = 0
 
-    def _run(self, coro):
+    def _run(self, coro, timeout_seconds: Optional[float] = None):
         """Execute nodriver coroutine in the dedicated event loop."""
         if not self._loop:
             raise RuntimeError("Driver loop not initialized. Call setup() first.")
+        if timeout_seconds and timeout_seconds > 0:
+            return self._loop.run_until_complete(asyncio.wait_for(coro, timeout=timeout_seconds))
         return self._loop.run_until_complete(coro)
 
     @property
@@ -56,7 +61,6 @@ class NoDriverDriver:
         headless = os.getenv("NODRIVER_HEADLESS", "false").lower() in {"1", "true", "yes"}
         browser_args = [
             f"--user-agent={user_agent}",
-            "--disable-blink-features=AutomationControlled",
             "--disable-dev-shm-usage",
         ]
 
@@ -77,7 +81,7 @@ class NoDriverDriver:
             logger.error(f"❌ Failed to initialize NoDriver browser: {e}")
             raise
     
-    def restart(self) -> None:
+    def restart(self, reason: str = "manual") -> None:
         """Restart the browser if unresponsive."""
         logger.warning("⚠️ Restarting NoDriver browser...")
         try:
@@ -85,12 +89,22 @@ class NoDriverDriver:
         except Exception:
             pass
         self.setup()
+        self._restart_epoch += 1
+        if reason == "health":
+            self._last_health_restart_epoch = self._restart_epoch
 
-    def get(self, url: str) -> None:
+    @property
+    def restart_epoch(self) -> int:
+        return self._restart_epoch
+
+    def had_health_restart_since(self, since_epoch: int) -> bool:
+        return self._last_health_restart_epoch > since_epoch
+
+    def get(self, url: str, timeout_seconds: Optional[float] = None) -> None:
         """Navigate the current tab to the given URL."""
         if not self.tab:
             raise RuntimeError("Tab not initialized. Call setup() first.")
-        self._run(self.tab.get(url))
+        self._run(self.tab.get(url), timeout_seconds=timeout_seconds)
 
     def sleep(self, seconds: float) -> None:
         """Async-aware sleep on the active tab."""
@@ -98,11 +112,11 @@ class NoDriverDriver:
             return
         self._run(self.tab.sleep(seconds))
 
-    def get_content(self) -> str:
+    def get_content(self, timeout_seconds: Optional[float] = None) -> str:
         """Fetch current page HTML."""
         if not self.tab:
             return ""
-        content = self._run(self.tab.get_content())
+        content = self._run(self.tab.get_content(), timeout_seconds=timeout_seconds)
         return str(content or "")
 
     def evaluate(self, expression: str, return_by_value: bool = True):
@@ -110,6 +124,52 @@ class NoDriverDriver:
         if not self.tab:
             return None
         return self._run(self.tab.evaluate(expression, return_by_value=return_by_value))
+
+    def _list_tabs(self) -> List:
+        if not self.browser:
+            return []
+
+        tabs = getattr(self.browser, "tabs", None)
+        if isinstance(tabs, dict):
+            return [tab for tab in tabs.values() if tab is not None]
+        if isinstance(tabs, list):
+            return [tab for tab in tabs if tab is not None]
+        if tabs:
+            return [tabs]
+        return [self.tab] if self.tab else []
+
+    def cleanup_tabs_for_next_batch(self) -> None:
+        """Close popups/new tabs and reset to a clean working tab between batches."""
+        if not self.browser:
+            return
+
+        tabs = self._list_tabs()
+        primary_tab = self.tab or (tabs[0] if tabs else None)
+        closed_tabs = 0
+        close_errors = 0
+
+        for tab in tabs:
+            if tab is None or tab is primary_tab:
+                continue
+            try:
+                self._run(tab.close())
+                closed_tabs += 1
+            except Exception:
+                close_errors += 1
+                continue
+
+        try:
+            self.tab = self._run(self.browser.get("about:blank"))
+            logger.debug(f"Batch tab reset succeeded (closed_tabs={closed_tabs})")
+        except Exception:
+            self.tab = primary_tab
+            try:
+                self.get("about:blank")
+            except Exception:
+                pass
+
+        if close_errors > 0:
+            logger.debug(f"Batch tab cleanup had close errors (errors={close_errors})")
     
     def quit(self) -> None:
         """Close the browser and clean up loop resources."""
@@ -138,6 +198,7 @@ class PageScraper:
         driver: NoDriverDriver,
         excluded_domains: Optional[List[str]] = None,
         prevalidate_http: bool = False,
+        site_timeout_seconds: int = 30,
     ):
         """
         Initialize page scraper.
@@ -151,6 +212,7 @@ class PageScraper:
         self.driver = driver
         self.excluded_domains = excluded_domains or []
         self.prevalidate_http = prevalidate_http
+        self.site_timeout_seconds = site_timeout_seconds
     
     def accept_cookies(self) -> bool:
         """Try to accept cookie consent banners"""
@@ -201,7 +263,7 @@ class PageScraper:
                 return None
             
             logger.info(f"Searching for email on: {url}")
-            self.driver.get(url)
+            self.driver.get(url, timeout_seconds=self.site_timeout_seconds)
             self.driver.sleep(1.0)
 
             current_url = self.driver.current_url
@@ -216,7 +278,7 @@ class PageScraper:
             self.accept_cookies()
             self.driver.sleep(1.0)
 
-            page_text = self.driver.get_content()
+            page_text = self.driver.get_content(timeout_seconds=self.site_timeout_seconds)
             emails = extract_emails_from_text(page_text)
             
             if emails:

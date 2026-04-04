@@ -22,6 +22,7 @@ class GoogleSearcher:
         driver: NoDriverDriver,
         excluded_domains: Optional[List[str]] = None,
         generic_domains: Optional[List[str]] = None,
+        site_timeout_seconds: int = 30,
     ):
         """
         Initialize Google searcher.
@@ -34,6 +35,7 @@ class GoogleSearcher:
         self.driver = driver
         self.excluded_domains = excluded_domains or []
         self.generic_domains = generic_domains or []
+        self.site_timeout_seconds = site_timeout_seconds
     
     def search(
         self,
@@ -58,14 +60,14 @@ class GoogleSearcher:
                 logger.info(f"Googling: {search_query} (Attempt {attempt + 1}/{max_retries})")
 
                 search_url = f"https://www.google.com/search?q={quote_plus(search_query)}"
-                self.driver.get(search_url)
+                self.driver.get(search_url, timeout_seconds=self.site_timeout_seconds)
                 self.driver.sleep(random.uniform(1.0, 1.5))
 
                 self._accept_google_cookies()
                 time.sleep(random.uniform(0.8, 1.2))
 
                 time.sleep(random.uniform(1.8, 2.5))
-                html = self.driver.get_content()
+                html = self.driver.get_content(timeout_seconds=self.site_timeout_seconds)
                 valid_results = self._extract_google_result_urls(html)
 
                 if not valid_results:
@@ -88,7 +90,7 @@ class GoogleSearcher:
                     if "timed out" in str(e).lower() or "timeout" in str(e).lower():
                         logger.warning("⚠️ Timeout detected, restarting driver...")
                         try:
-                            self.driver.restart()
+                            self.driver.restart(reason="health")
                             logger.info("✅ Driver restarted")
                         except Exception as restart_error:
                             logger.error(f"Failed to restart driver: {restart_error}")

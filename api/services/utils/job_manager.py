@@ -112,7 +112,9 @@ class JobStore:
             if status == "running":
                 job.started_at = _utc_now_iso()
                 job.completed_at = None
-                job.result = None
+                # Preserve partial stats when resuming from a paused checkpoint.
+                if job.current_row <= 1:
+                    job.result = None
                 job.error = None
                 job.paused_at = None
             elif status == "queued":
