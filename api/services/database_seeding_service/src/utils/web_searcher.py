@@ -4,7 +4,7 @@ import logging
 import time
 import random
 from urllib.parse import quote_plus, urlparse, parse_qs
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Dict
 from bs4 import BeautifulSoup
 
 from .url_utils import validate_website_http
@@ -131,10 +131,29 @@ class GoogleSearcher:
     def _extract_google_result_urls(self, html: str) -> List[str]:
         """
         Extract the first HTTP-validated external website URL from Google results.
-        Targets result containers (.A6K0A) with their primary anchor (jsname="UWckNb").
+        Priority order:
+        1) Local actions panel Website (only if div.zhZ3gf exists)
+        2) Organic result containers (.A6K0A) with primary anchor (jsname="UWckNb")
         """
         soup = BeautifulSoup(html or "", "html.parser")
         excluded_for_validation = list(self.excluded_domains) + list(self.generic_domains)
+
+        # Strict gate: never parse local actions unless the local panel root exists.
+        local_panel_root = soup.select_one("div.zhZ3gf")
+        if local_panel_root:
+            local_actions = self._extract_local_panel_actions(local_panel_root)
+            logger.debug(f"Local actions detected: {sorted(local_actions.keys())}")
+
+            local_website = local_actions.get("website", "")
+            if local_website:
+                if validate_website_http(local_website, excluded_domains=excluded_for_validation):
+                    logger.info(f"Using local panel website candidate: {local_website}")
+                    return [local_website]
+                logger.debug(f"Local panel website candidate failed validation: {local_website}")
+            else:
+                logger.debug("Local panel found but no Website action URL extracted")
+        else:
+            logger.debug("Local panel root div.zhZ3gf not found; skipping local action parsing")
 
         for container in soup.select(".A6K0A"):
             anchor = container.select_one('a[jsname="UWckNb"]')
@@ -152,6 +171,57 @@ class GoogleSearcher:
             return [candidate]
 
         return []
+
+    def _extract_local_panel_actions(self, local_panel_root) -> Dict[str, str]:
+        """Extract available local panel actions and associated values/URLs."""
+        actions: Dict[str, str] = {}
+
+        for action_block in local_panel_root.select("div.bkaPDb"):
+            label_node = action_block.select_one("span.aSAiSd")
+            label = (label_node.get_text(" ", strip=True).lower() if label_node else "")
+            action_key = self._normalize_local_action_label(label)
+            if not action_key:
+                continue
+
+            if action_key == "call":
+                phone_anchor = action_block.select_one("a[data-phone-number]")
+                phone_number = (
+                    (phone_anchor.get("data-phone-number") if phone_anchor else "") or ""
+                ).strip()
+                if phone_number:
+                    actions[action_key] = phone_number
+                continue
+
+            link_node = action_block.select_one("a[href]")
+            href = ((link_node.get("href") if link_node else "") or "").strip()
+            if not href:
+                continue
+
+            if action_key == "website":
+                candidate = self._normalize_google_href(href)
+                if candidate:
+                    actions[action_key] = candidate
+                continue
+
+            if href.startswith("http://") or href.startswith("https://"):
+                actions[action_key] = href
+            elif href.startswith("/"):
+                actions[action_key] = f"https://www.google.com{href}"
+
+        return actions
+
+    def _normalize_local_action_label(self, label: str) -> str:
+        """Map local panel action label text to stable internal keys."""
+        normalized = (label or "").strip().lower()
+        mapping = {
+            "website": "website",
+            "call": "call",
+            "directions": "directions",
+            "reviews": "reviews",
+            "share": "share",
+            "save": "save",
+        }
+        return mapping.get(normalized, "")
 
     def _normalize_google_href(self, href: str) -> str:
         """Normalize Google SERP hrefs to direct target URLs."""
