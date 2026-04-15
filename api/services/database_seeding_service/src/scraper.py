@@ -408,6 +408,9 @@ def _process_contact_row(
     phone = _mapped_or_default("phone", None)
     mobile = _mapped_or_default("mobile", None)
     fax = _mapped_or_default("fax", None)
+    geo_location: Optional[str] = None
+    geo_city: Optional[str] = None
+    geo_country: Optional[str] = None
 
     if validator:
         try:
@@ -440,10 +443,29 @@ def _process_contact_row(
             if enriched_website:
                 logger.info(f"Website enrichment on: '{enriched_website}'")
 
-                if not enriched_email or not phone:
+                needs_site_lookup = (
+                    not enriched_email
+                    or not phone
+                    or not contact_form_url
+                    or not _mapped_or_default("city", "")
+                    or not _mapped_or_default("country", "")
+                )
+
+                if needs_site_lookup:
                     row_stats["website_scraping_attempt"] = True
                     logger.info("Website scraping attempt: looking for email and phone")
-                    found_emails, found_phones, found_contact_page = validator.find_contact_info_on_website(enriched_website)
+                    (
+                        found_emails,
+                        found_phones,
+                        found_contact_page,
+                        found_location,
+                        found_city,
+                        found_country,
+                    ) = validator.find_contact_info_on_website(enriched_website)
+
+                    geo_location = found_location or geo_location
+                    geo_city = found_city or geo_city
+                    geo_country = found_country or geo_country
 
                     if not contact_form_url and found_contact_page:
                         contact_form_url = found_contact_page
@@ -541,7 +563,14 @@ def _process_contact_row(
         or _mapped_or_default("secteur", "")
     )
 
+    city = str(_mapped_or_default("city", "") or "")
+    if not city:
+        city = (geo_city or geo_location or "").strip()
+
     country = str(_mapped_or_default("country", "") or "")
+    if not country:
+        country = (geo_country or "").strip()
+
     if not country:
         try:
             from_tld = get_country_from_email_domain(enriched_email)
@@ -567,7 +596,7 @@ def _process_contact_row(
         fax,
         company_name,
         _mapped_or_default("address", None),
-        _mapped_or_default("city", None),
+        city or None,
         _mapped_or_default("zip", None),
         country,
         urlcontactform,

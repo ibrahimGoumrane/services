@@ -148,11 +148,14 @@ class WebsiteEmailValidator:
             excluded_domains=list(self.not_visiting_domains),
         )
 
-    def find_contact_info_on_website(self, website_url: str) -> Tuple[List[str], List[str], Optional[str]]:
-        """Find emails, phones, and contact page URL in one scraper call."""
+    def find_contact_info_on_website(
+        self,
+        website_url: str,
+    ) -> Tuple[List[str], List[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
+        """Find emails, phones, contact page, and geo hints in one scraper call."""
         if not self.scraper:
             logger.error("Scraper not initialized. Call setup_driver() first.")
-            return [], [], None
+            return [], [], None, None, None, None
 
         return self.scraper.find_contact_info_on_website(website_url)
 

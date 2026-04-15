@@ -9,3 +9,4 @@ beautifulsoup4
 nodriver
 mysqlx
 python-dotenv
+geograpy3

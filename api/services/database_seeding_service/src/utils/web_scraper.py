@@ -9,6 +9,8 @@ from typing import Optional, List, Tuple
 from urllib.parse import urljoin, urlparse
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+import geograpy
+
 
 load_dotenv()
 import nodriver as uc
@@ -335,6 +337,29 @@ class PageScraper:
 
         return self._dedupe_preserve_order(candidates)
 
+    def _extract_geo_from_visible_text(self, text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Extract (location, city, country) from visible text using geograpy3 when available."""
+        if not text or geograpy is None:
+            return None, None, None
+
+        try:
+            context = geograpy.get_place_context(text=text)
+            cities = list(getattr(context, "cities", []) or [])
+            countries = list(getattr(context, "countries", []) or [])
+            regions = list(getattr(context, "regions", []) or [])
+
+            city = (cities[0] if cities else "") or ""
+            country = (countries[0] if countries else "") or ""
+            location = city or country or ((regions[0] if regions else "") or "")
+
+            return (
+                location.strip() or None,
+                city.strip() or None,
+                country.strip() or None,
+            )
+        except Exception:
+            return None, None, None
+
     def _scrape_page_contact_data(self, url: str) -> Tuple[List[str], List[str], str]:
         if self.prevalidate_http and not validate_website_http(
             url,
@@ -395,7 +420,10 @@ class PageScraper:
         logger.debug("No contact page found")
         return None
 
-    def find_contact_info_on_website(self, website_url: str) -> Tuple[List[str], List[str], Optional[str]]:
+    def find_contact_info_on_website(
+        self,
+        website_url: str,
+    ) -> Tuple[List[str], List[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
         Find emails, phones, and a contact page URL in a single crawl flow.
 
@@ -405,17 +433,26 @@ class PageScraper:
         - Otherwise crawl homepage-discovered contact links to fill missing values.
         """
         if not website_url:
-            return [], [], None
+            return [], [], None, None, None, None
 
         website_url = normalize_url(website_url)
         all_emails: List[str] = []
         all_phones: List[str] = []
         selected_contact_page: Optional[str] = None
+        extracted_location: Optional[str] = None
+        extracted_city: Optional[str] = None
+        extracted_country: Optional[str] = None
 
         try:
             homepage_emails, homepage_phones, homepage_html = self._scrape_page_contact_data(website_url)
             all_emails.extend(homepage_emails)
             all_phones.extend(homepage_phones)
+
+            homepage_visible_text = self._extract_visible_text(homepage_html)
+            loc, city, country = self._extract_geo_from_visible_text(homepage_visible_text)
+            extracted_location = extracted_location or loc
+            extracted_city = extracted_city or city
+            extracted_country = extracted_country or country
 
             contact_candidates = self._extract_contact_links_from_home_html(website_url, homepage_html)
             for candidate in contact_candidates:
@@ -449,6 +486,13 @@ class PageScraper:
                         all_emails.extend(contact_emails)
                         all_phones.extend(contact_phones)
 
+                        if not (extracted_location and extracted_city and extracted_country):
+                            contact_visible_text = self._extract_visible_text(_)
+                            loc2, city2, country2 = self._extract_geo_from_visible_text(contact_visible_text)
+                            extracted_location = extracted_location or loc2
+                            extracted_city = extracted_city or city2
+                            extracted_country = extracted_country or country2
+
                         has_email = bool(all_emails)
                         has_phone = bool(all_phones)
                         if has_email and has_phone:
@@ -458,11 +502,18 @@ class PageScraper:
 
             all_emails = self._dedupe_preserve_order(all_emails)
             all_phones = self._dedupe_preserve_order(all_phones)
-            return all_emails, all_phones, selected_contact_page
+            return (
+                all_emails,
+                all_phones,
+                selected_contact_page,
+                extracted_location,
+                extracted_city,
+                extracted_country,
+            )
 
         except Exception as exc:
             logger.error(f"Error finding contact info on website: {exc}")
-            return [], [], None
+            return [], [], None, None, None, None
         finally:
             try:
                 self.driver.get("about:blank")
