@@ -147,22 +147,17 @@ class WebsiteEmailValidator:
             url,
             excluded_domains=list(self.not_visiting_domains),
         )
-    
-    def find_email_on_website(self, website_url: str) -> Optional[List[str]]:
-        """
-        Find emails on a website using NoDriver scraping.
-        
-        Args:
-            website_url: Website URL to search
-        
-        Returns:
-            List of emails found, or None
-        """
+
+    def find_contact_info_on_website(self, website_url: str) -> Tuple[List[str], List[str], Optional[str]]:
+        """Find emails, phones, and contact page URL in one scraper call."""
         if not self.scraper:
             logger.error("Scraper not initialized. Call setup_driver() first.")
-            return None
-        
-        return self.scraper.find_emails_on_website(website_url)
+            return [], [], None
+
+        return self.scraper.find_contact_info_on_website(website_url)
+
+
+
     
     def find_contact_page(self, base_url: str) -> Optional[str]:
         """

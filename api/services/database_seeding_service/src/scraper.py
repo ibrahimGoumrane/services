@@ -367,30 +367,33 @@ def _process_contact_row(
         "synthetic_email_used": False,
     }
 
-    csv_fullname_raw = (
-        data_transformers.get_mapped_value(row, csv_mapping.get("fullname"))
-        or ""
-    ).strip()
+    def _mapped_or_default(field: str, fallback: Any = "") -> Any:
+        value = data_transformers.get_mapped_value(row, csv_mapping.get(field))
+        if value is not None and str(value).strip() != "":
+            return value
+
+        default_value = default_values.get(field)
+        if default_value is not None and str(default_value).strip() != "":
+            return default_value
+
+        return fallback
+
+    csv_fullname_raw = str(_mapped_or_default("fullname", "") or "").strip()
     csv_fname = data_transformers.format_fname(
-        data_transformers.get_mapped_value(row, csv_mapping.get("fname"))
+        _mapped_or_default("fname", "")
     )
     csv_lname = data_transformers.format_lname(
-        data_transformers.get_mapped_value(row, csv_mapping.get("lname"))
+        _mapped_or_default("lname", "")
     )
     csv_fullname = csv_fullname_raw or " ".join(
         part for part in [csv_lname, csv_fname] if part
     )
 
-    csv_company_name = (
-        data_transformers.get_mapped_value(row, csv_mapping.get("name"))
-        or ""
-    ).strip()
+    csv_company_name = str(_mapped_or_default("name", "") or "").strip()
 
-    csv_email = (data_transformers.get_mapped_value(row, csv_mapping.get("email")) or "").strip().lower()
+    csv_email = str(_mapped_or_default("email", "") or "").strip().lower()
 
-    row_input_website = (
-        data_transformers.get_mapped_value(row, csv_mapping.get("url")) or ""
-    ).strip()
+    row_input_website = str(_mapped_or_default("url", "") or "").strip()
     row_has_website_input = bool(row_input_website)
 
     if not (csv_fullname or csv_fname or csv_lname or csv_company_name or csv_email or row_input_website):
@@ -402,15 +405,17 @@ def _process_contact_row(
     contact_form_url = None
 
     # Start with mapped values, then fill missing values from discovered website when allowed.
-    phone = data_transformers.get_mapped_value(row, csv_mapping.get("phone"))
-    mobile = data_transformers.get_mapped_value(row, csv_mapping.get("mobile"))
-    fax = data_transformers.get_mapped_value(row, csv_mapping.get("fax"))
+    phone = _mapped_or_default("phone", None)
+    mobile = _mapped_or_default("mobile", None)
+    fax = _mapped_or_default("fax", None)
 
     if validator:
         try:
             location = (
-                data_transformers.get_mapped_value(row, csv_mapping.get("city"))
-                or data_transformers.get_mapped_value(row, csv_mapping.get("location"))
+                _mapped_or_default("location", "")
+                or _mapped_or_default("city", "")
+                or _mapped_or_default("country", "")
+                or _mapped_or_default("position", "")
                 or ""
             )
             # Keep full email (not just domain) when using email as Google search seed.
@@ -435,27 +440,36 @@ def _process_contact_row(
             if enriched_website:
                 logger.info(f"Website enrichment on: '{enriched_website}'")
 
-                if not enriched_email:
+                if not enriched_email or not phone:
                     row_stats["website_scraping_attempt"] = True
-                    logger.info("Website scraping attempt: looking for email")
-                    found_emails = validator.find_email_on_website(enriched_website) or []
-                    filtered = validator.filter_emails(found_emails)
-                    if filtered:
-                        enriched_email = filtered[0].strip().lower()
-                        row_stats["website_scraping_success"] = True
-                        logger.info(f"Website scraping SUCCESS: found email '{enriched_email}'")
-                    else:
-                        logger.info("Website scraping failed: no valid email found on website")
+                    logger.info("Website scraping attempt: looking for email and phone")
+                    found_emails, found_phones, found_contact_page = validator.find_contact_info_on_website(enriched_website)
 
-                if not contact_form_url:
-                    try:
-                        contact_form = validator.find_contact_page(enriched_website)
-                        if contact_form:
-                            contact_form_url = contact_form
-                            row_stats["contact_form_found"] = True
-                            logger.info(f"Contact form found: '{contact_form}'")
-                    except Exception:
-                        pass
+                    if not contact_form_url and found_contact_page:
+                        contact_form_url = found_contact_page
+                        row_stats["contact_form_found"] = True
+                        logger.info(f"Contact form found: '{found_contact_page}'")
+
+                    email_found = False
+                    if not enriched_email:
+                        filtered = validator.filter_emails(found_emails or [])
+                        if filtered:
+                            enriched_email = filtered[0].strip().lower()
+                            email_found = True
+                            logger.info(f"Website scraping SUCCESS: found email '{enriched_email}'")
+
+                    phone_found = False
+                    if not phone:
+                        if found_phones:
+                            phone = (found_phones[0] or "").strip() or None
+                            if phone:
+                                phone_found = True
+                                logger.info(f"Website scraping SUCCESS: found phone '{phone}'")
+
+                    if email_found or phone_found:
+                        row_stats["website_scraping_success"] = True
+                    else:
+                        logger.info("Website scraping failed: no valid email or phone found on website")
 
         except Exception as exc:
             logger.warning(f"Web enrichment error: {exc}")
@@ -466,7 +480,7 @@ def _process_contact_row(
             fallback_domain = "nodomaine.com"
 
         synthetic_user_id = uuid.uuid4().hex
-        enriched_email = f"{synthetic_user_id}-postmaster@{fallback_domain}"
+        enriched_email = f"postmaster+{synthetic_user_id}@{fallback_domain}"
         row_stats["synthetic_email_used"] = True
         logger.info(
             "Synthetic fallback email generated: "
@@ -477,7 +491,7 @@ def _process_contact_row(
     domain = domain.strip().lower()
     if not domain:
         logger.info("Email domain was empty; normalizing to nodomaine.com to preserve record")
-        local_part = enriched_email.split("@", 1)[0].strip() or f"{uuid.uuid4().hex}-postmaster"
+        local_part = enriched_email.split("@", 1)[0].strip() or f"postmaster+{uuid.uuid4().hex}"
         domain = "nodomaine.com"
         enriched_email = f"{local_part}@{domain}"
         row_stats["synthetic_email_used"] = True
@@ -520,14 +534,14 @@ def _process_contact_row(
     fname = csv_fname
     lname = csv_lname
     company_name = csv_company_name or None
-    ca = data_transformers.get_mapped_value(row, csv_mapping.get("ca"))
+    ca = _mapped_or_default("ca", None)
     activite = (
-        data_transformers.get_mapped_value(row, csv_mapping.get("activite"))
-        or data_transformers.get_mapped_value(row, csv_mapping.get("activité"))
-        or data_transformers.get_mapped_value(row, csv_mapping.get("secteur"))
+        _mapped_or_default("activite", "")
+        or _mapped_or_default("activité", "")
+        or _mapped_or_default("secteur", "")
     )
 
-    country = data_transformers.get_mapped_value(row, csv_mapping.get("country")) or ""
+    country = str(_mapped_or_default("country", "") or "")
     if not country:
         try:
             from_tld = get_country_from_email_domain(enriched_email)
@@ -536,8 +550,8 @@ def _process_contact_row(
         except Exception as exc:
             logger.debug(f"Country enrichment failed for {enriched_email}: {exc}")
 
-    urlcontactform = contact_form_url or data_transformers.get_mapped_value(row, csv_mapping.get("urlcontactform"))
-    row_sourcefile = data_transformers.get_mapped_value(row, csv_mapping.get("sourcefile")) or sourcefile
+    urlcontactform = contact_form_url or _mapped_or_default("urlcontactform", None)
+    row_sourcefile = _mapped_or_default("sourcefile", None) or sourcefile
 
     logger.info(f"Email classification: is_generic={is_generic_email}, is_user_generic={is_user_generic}")
 
@@ -547,18 +561,18 @@ def _process_contact_row(
         fname,
         lname,
         enriched_website or None,
-        data_transformers.get_mapped_value(row, csv_mapping.get("position")),
+        _mapped_or_default("position", None),
         phone,
         mobile,
         fax,
         company_name,
-        data_transformers.get_mapped_value(row, csv_mapping.get("address")),
-        data_transformers.get_mapped_value(row, csv_mapping.get("city")),
-        data_transformers.get_mapped_value(row, csv_mapping.get("zip")),
+        _mapped_or_default("address", None),
+        _mapped_or_default("city", None),
+        _mapped_or_default("zip", None),
         country,
         urlcontactform,
-        data_transformers.get_mapped_value(row, csv_mapping.get("linkedin")),
-        data_transformers.get_mapped_value(row, csv_mapping.get("image")),
+        _mapped_or_default("linkedin", None),
+        _mapped_or_default("image", None),
         mx_host,
         is_generic_email,
         is_user_generic,

@@ -3,6 +3,7 @@
 import logging
 import time
 import random
+import unicodedata
 from urllib.parse import quote_plus, urlparse, parse_qs
 from typing import Tuple, Optional, List, Dict
 from bs4 import BeautifulSoup
@@ -184,7 +185,7 @@ class GoogleSearcher:
                 continue
 
             if action_key == "call":
-                phone_anchor = action_block.select_one("a[data-phone-number]")
+                phone_anchor = action_block.select_one("[data-phone-number]")
                 phone_number = (
                     (phone_anchor.get("data-phone-number") if phone_anchor else "") or ""
                 ).strip()
@@ -212,16 +213,29 @@ class GoogleSearcher:
 
     def _normalize_local_action_label(self, label: str) -> str:
         """Map local panel action label text to stable internal keys."""
-        normalized = (label or "").strip().lower()
+        normalized = self._canonicalize_local_action_label(label)
         mapping = {
             "website": "website",
+            "site web": "website",
+            "site internet": "website",
+            "site": "website",
             "call": "call",
+            "appeler": "call",
+            "appel": "call",
             "directions": "directions",
-            "reviews": "reviews",
-            "share": "share",
-            "save": "save",
+            "itineraire": "directions",
+            "itineraires": "directions",
+
         }
         return mapping.get(normalized, "")
+
+    def _canonicalize_local_action_label(self, label: str) -> str:
+        """Normalize action labels across locales (spacing/case/accents)."""
+        normalized = (label or "").strip().lower()
+        normalized = unicodedata.normalize("NFKD", normalized)
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = " ".join(normalized.split())
+        return normalized
 
     def _normalize_google_href(self, href: str) -> str:
         """Normalize Google SERP hrefs to direct target URLs."""

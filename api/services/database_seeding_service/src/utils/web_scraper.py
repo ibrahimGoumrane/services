@@ -4,9 +4,11 @@ import asyncio
 import logging
 import os
 import random
-from typing import Optional, List
-from urllib.parse import urljoin
+import re
+from typing import Optional, List, Tuple
+from urllib.parse import urljoin, urlparse
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 load_dotenv()
 import nodriver as uc
@@ -24,6 +26,8 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 OPR/105.0.0.0',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0',
 ]
+
+PHONE_REGEX = re.compile(r"(?<!\d)(?!\d{4}[-/]\d{2}[-/]\d{2}\b)(?:\+?\d[\d\s().\-/]{6,}\d)(?!\d)")
 
 
 class NoDriverDriver:
@@ -67,6 +71,14 @@ class NoDriverDriver:
         try:
             self._loop = uc.loop()
             self.browser = self._run(uc.start(headless=headless, browser_args=browser_args))
+
+            # Warm up the browser session on Google before normal crawling.
+            try:
+                self.tab = self._run(self.browser.get("https://www.google.com"))
+                self._run(self.tab.sleep(random.uniform(1.0, 1.6)))
+            except Exception as warmup_exc:
+                logger.debug(f"Google warmup step failed: {warmup_exc}")
+
             self.tab = self._run(self.browser.get("about:blank"))
 
             width = random.randint(1366, 1920)
@@ -243,53 +255,116 @@ class PageScraper:
         
         return False
     
-    def find_emails_on_page(self, url: str) -> Optional[List[str]]:
-        """
-        Find emails on a specific page using nodriver.
-        
-        Args:
-            url: URL to scrape
-        
-        Returns:
-            List of emails found, or None
-        """
-        try:
-            if self.prevalidate_http and not validate_website_http(
-                url,
-                timeout=3,
-                excluded_domains=self.excluded_domains,
-            ):
-                logger.warning(f"⏭️ Skipping URL rejected by validator: {url}")
-                return None
-            
-            logger.info(f"Searching for email on: {url}")
-            self.driver.get(url, timeout_seconds=self.site_timeout_seconds)
-            self.driver.sleep(1.0)
 
-            current_url = self.driver.current_url
-            if not validate_website_http(
-                current_url,
-                timeout=3,
-                excluded_domains=self.excluded_domains,
-            ):
-                logger.warning(f"⏭️ Skipping page URL rejected by validator: {current_url}")
-                return None
 
-            self.accept_cookies()
-            self.driver.sleep(1.0)
+    def _dedupe_preserve_order(self, values: List[str]) -> List[str]:
+        seen = set()
+        unique_values: List[str] = []
+        for value in values:
+            key = (value or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            unique_values.append((value or "").strip())
+        return unique_values
 
-            page_text = self.driver.get_content(timeout_seconds=self.site_timeout_seconds)
-            emails = extract_emails_from_text(page_text)
-            
-            if emails:
-                logger.info(f"✓ Found {len(emails)} valid email(s): {emails}")
-                return emails
-            
-            return None
+    def _extract_phone_numbers_from_text(self, text: str) -> List[str]:
+        if not text:
+            return []
 
-        except Exception as e:
-            logger.error(f"Error finding email on page: {e}")
-            return None
+        candidates = PHONE_REGEX.findall(text)
+        normalized: List[str] = []
+        for candidate in candidates:
+            raw = (candidate or "").strip()
+            if not raw:
+                continue
+
+            compact = re.sub(r"[^\d+]", "", raw)
+            digits = re.sub(r"\D", "", compact)
+            if len(digits) < 7 or len(digits) > 15:
+                continue
+
+            if compact.startswith("+"):
+                normalized.append(f"+{digits}")
+            else:
+                normalized.append(digits)
+
+        return self._dedupe_preserve_order(normalized)
+
+    def _extract_visible_text(self, html: str) -> str:
+        """Extract user-visible text only, ignoring script/style/non-content nodes."""
+        if not html:
+            return ""
+
+        soup = BeautifulSoup(html, "html.parser")
+        for node in soup(["script", "style", "noscript", "svg"]):
+            node.decompose()
+
+        return soup.get_text(" ", strip=True)
+
+    def _extract_contact_links_from_home_html(self, base_url: str, html: str) -> List[str]:
+        if not html:
+            return []
+
+        soup = BeautifulSoup(html, "html.parser")
+        candidates: List[str] = []
+
+        for node in soup.select("a[href]"):
+            href = (node.get("href") or "").strip()
+            if not href:
+                continue
+
+            href_lower = href.lower()
+            if "contact" not in href_lower:
+                continue
+
+            if href_lower.startswith("mailto:") or href_lower.startswith("tel:"):
+                continue
+
+            if href_lower.startswith("javascript:") or href.startswith("#"):
+                continue
+
+            absolute_url = urljoin(base_url, href)
+            parsed = urlparse(absolute_url)
+            if parsed.scheme not in {"http", "https"}:
+                continue
+
+            normalized = normalize_url(absolute_url)
+            if normalized:
+                candidates.append(normalized)
+
+        return self._dedupe_preserve_order(candidates)
+
+    def _scrape_page_contact_data(self, url: str) -> Tuple[List[str], List[str], str]:
+        if self.prevalidate_http and not validate_website_http(
+            url,
+            timeout=3,
+            excluded_domains=self.excluded_domains,
+        ):
+            logger.warning(f"⏭️ Skipping URL rejected by validator: {url}")
+            return [], [], ""
+
+        logger.info(f"Searching for contact data on: {url}")
+        self.driver.get(url, timeout_seconds=self.site_timeout_seconds)
+        self.driver.sleep(1.0)
+
+        current_url = self.driver.current_url
+        if not validate_website_http(
+            current_url,
+            timeout=3,
+            excluded_domains=self.excluded_domains,
+        ):
+            logger.warning(f"⏭️ Skipping page URL rejected by validator: {current_url}")
+            return [], [], ""
+
+        self.accept_cookies()
+        self.driver.sleep(1.0)
+
+        page_html = self.driver.get_content(timeout_seconds=self.site_timeout_seconds)
+        emails = self._dedupe_preserve_order(extract_emails_from_text(page_html))
+        visible_text = self._extract_visible_text(page_html)
+        phones = self._extract_phone_numbers_from_text(visible_text)
+        return emails, phones, page_html
     
     def find_contact_page(self, base_url: str) -> Optional[str]:
         """
@@ -301,89 +376,97 @@ class PageScraper:
         Returns:
             Contact page URL if found, None otherwise
         """
-        common_paths = [
-            '/contact',
-            '/contact-us',
-            '/contactus',
-            '/about/contact',
-            '/contact.html',
-            '/contact.php'
-        ]
-        
         base_url = normalize_url(base_url)
-        
-        for path in common_paths:
-            contact_url = urljoin(base_url, path)
-            
-            try:
+
+        try:
+            _, _, homepage_html = self._scrape_page_contact_data(base_url)
+            discovered = self._extract_contact_links_from_home_html(base_url, homepage_html)
+            for contact_url in discovered:
                 if validate_website_http(
                     contact_url,
                     timeout=2,
                     excluded_domains=self.excluded_domains,
                 ):
-                    logger.info(f"✓ Found contact page: {contact_url}")
+                    logger.info(f"✓ Found contact page from homepage href: {contact_url}")
                     return contact_url
-            except Exception:
-                continue
-        
+        except Exception:
+            pass
+
         logger.debug("No contact page found")
         return None
-    
-    def find_emails_on_website(self, website_url: str) -> Optional[List[str]]:
+
+    def find_contact_info_on_website(self, website_url: str) -> Tuple[List[str], List[str], Optional[str]]:
         """
-        Search for emails on a website (main page and contact page).
-        
-        Args:
-            website_url: Website URL to search
-        
-        Returns:
-            List of unique emails found, or None
+        Find emails, phones, and a contact page URL in a single crawl flow.
+
+        Rules:
+        - Scrape homepage first.
+        - If both email and phone are present on homepage, skip contact-page crawl.
+        - Otherwise crawl homepage-discovered contact links to fill missing values.
         """
         if not website_url:
-            return None
-        
-        website_url = normalize_url(website_url)
+            return [], [], None
 
-        all_emails = []
-        
-        # Try main page
-        emails = self.find_emails_on_page(website_url)
-        if emails:
-            all_emails.extend(emails)
-            logger.info(f"✓ Found {len(emails)} email(s) on main page")
-        else:
-            logger.debug("No emails found on main page")
-        
-        # Try contact page if no emails on main page
-        if not all_emails:
-            logger.debug("Checking contact page...")
-            contact_url = self.find_contact_page(website_url)
-            if contact_url:
-                emails = self.find_emails_on_page(contact_url)
-                if emails:
-                    all_emails.extend(emails)
-                    logger.info(f"✓ Found {len(emails)} email(s) on contact page")
-        
-        # Deduplicate
-        if all_emails:
-            seen = set()
-            unique_emails = []
-            for email in all_emails:
-                email_lower = email.lower()
-                if email_lower not in seen:
-                    seen.add(email_lower)
-                    unique_emails.append(email)
-            
+        website_url = normalize_url(website_url)
+        all_emails: List[str] = []
+        all_phones: List[str] = []
+        selected_contact_page: Optional[str] = None
+
+        try:
+            homepage_emails, homepage_phones, homepage_html = self._scrape_page_contact_data(website_url)
+            all_emails.extend(homepage_emails)
+            all_phones.extend(homepage_phones)
+
+            contact_candidates = self._extract_contact_links_from_home_html(website_url, homepage_html)
+            for candidate in contact_candidates:
+                if validate_website_http(
+                    candidate,
+                    timeout=2,
+                    excluded_domains=self.excluded_domains,
+                ):
+                    selected_contact_page = candidate
+                    break
+
+            has_email = bool(all_emails)
+            has_phone = bool(all_phones)
+            if has_email and has_phone:
+                logger.info("✓ Homepage already has both email and phone; skipping contact-page crawl")
+            else:
+                logger.debug("At least one value missing on homepage; checking contact pages")
+                for contact_url in contact_candidates:
+                    try:
+                        if not validate_website_http(
+                            contact_url,
+                            timeout=2,
+                            excluded_domains=self.excluded_domains,
+                        ):
+                            continue
+
+                        if not selected_contact_page:
+                            selected_contact_page = contact_url
+
+                        contact_emails, contact_phones, _ = self._scrape_page_contact_data(contact_url)
+                        all_emails.extend(contact_emails)
+                        all_phones.extend(contact_phones)
+
+                        has_email = bool(all_emails)
+                        has_phone = bool(all_phones)
+                        if has_email and has_phone:
+                            break
+                    except Exception:
+                        continue
+
+            all_emails = self._dedupe_preserve_order(all_emails)
+            all_phones = self._dedupe_preserve_order(all_phones)
+            return all_emails, all_phones, selected_contact_page
+
+        except Exception as exc:
+            logger.error(f"Error finding contact info on website: {exc}")
+            return [], [], None
+        finally:
             try:
                 self.driver.get("about:blank")
             except Exception:
                 pass
-            
-            return unique_emails
-        
-        try:
-            self.driver.get("about:blank")
-        except Exception:
-            pass
-        
-        return None
+
+    
