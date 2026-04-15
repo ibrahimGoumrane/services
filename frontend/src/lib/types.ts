@@ -72,6 +72,7 @@ export interface JobMetrics {
   inserted: number;
   updated: number;
   errors: number;
+  synthetic_emails_created: number;
 }
 
 export interface JobResult {
@@ -79,6 +80,7 @@ export interface JobResult {
   processed?: number;
   inserted?: number;
   updated?: number;
+  synthetic_emails_created?: number;
   errors?: string[];
 }
 

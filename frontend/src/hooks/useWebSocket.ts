@@ -72,7 +72,9 @@ function isProgressStreamData(data: unknown): data is WSProgressStreamData {
     typeof p.processed === "number" &&
     typeof p.inserted === "number" &&
     typeof p.updated === "number" &&
-    typeof p.errors === "number"
+    typeof p.errors === "number" &&
+    (typeof p.synthetic_emails_created === "number" ||
+      typeof p.synthetic_emails_created === "undefined")
   );
 }
 
@@ -82,6 +84,7 @@ function toMetricsFromResult(result: JobResult | null | undefined): JobMetrics {
     inserted: Number(result?.inserted ?? 0),
     updated: Number(result?.updated ?? 0),
     errors: Array.isArray(result?.errors) ? result.errors.length : 0,
+    synthetic_emails_created: Number(result?.synthetic_emails_created ?? 0),
   };
 }
 
@@ -123,6 +126,10 @@ function mergeMetricsFromLog(previous: JobMetrics, log: LogEntry): JobMetrics {
     next.errors += 1;
   }
 
+  if (/synthetic fallback email generated/i.test(message)) {
+    next.synthetic_emails_created += 1;
+  }
+
   return next;
 }
 
@@ -134,6 +141,7 @@ export function useWebSocket(jobId: string | null) {
     inserted: 0,
     updated: 0,
     errors: 0,
+    synthetic_emails_created: 0,
   });
   const [error, setError] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -193,12 +201,16 @@ export function useWebSocket(jobId: string | null) {
             }
 
             if (isProgressStreamData(data)) {
-              setMetrics({
+              setMetrics((previous) => ({
                 processed: data.payload.processed,
                 inserted: data.payload.inserted,
                 updated: data.payload.updated,
                 errors: data.payload.errors,
-              });
+                synthetic_emails_created:
+                  typeof data.payload.synthetic_emails_created === "number"
+                    ? data.payload.synthetic_emails_created
+                    : previous.synthetic_emails_created,
+              }));
             }
             break;
           case "completed":

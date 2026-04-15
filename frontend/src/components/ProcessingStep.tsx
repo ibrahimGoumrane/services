@@ -231,7 +231,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
             <h3 className="text-sm font-semibold text-slate-200 mb-5 pb-4 border-b border-slate-700/50">
               Live Metrics
             </h3>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               {[
                 {
                   label: "Processed",
@@ -252,6 +252,11 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
                   label: "Errors",
                   value: metrics.errors,
                   color: "text-rose-400",
+                },
+                {
+                  label: "Synthetic",
+                  value: metrics.synthetic_emails_created,
+                  color: "text-amber-400",
                 },
               ].map((m) => (
                 <div

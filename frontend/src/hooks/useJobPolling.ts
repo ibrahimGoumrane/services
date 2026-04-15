@@ -9,6 +9,7 @@ function toMetrics(snapshot: JobSnapshot): JobMetrics {
     inserted: Number(result?.inserted ?? 0),
     updated: Number(result?.updated ?? 0),
     errors: Array.isArray(result?.errors) ? result.errors.length : 0,
+    synthetic_emails_created: Number(result?.synthetic_emails_created ?? 0),
   };
 }
 

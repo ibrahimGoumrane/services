@@ -89,6 +89,7 @@ export function CompletionStep({
             `Inserted: ${metrics.inserted}`,
             `Updated: ${metrics.updated}`,
             `Errors: ${metrics.errors}`,
+            `Synthetic Emails: ${metrics.synthetic_emails_created}`,
             error ? `Error: ${error}` : "",
           ]
             .filter(Boolean)
@@ -108,6 +109,7 @@ export function CompletionStep({
           `Inserted: ${metrics.inserted}`,
           `Updated: ${metrics.updated}`,
           `Errors: ${metrics.errors}`,
+          `Synthetic Emails: ${metrics.synthetic_emails_created}`,
           error ? `Error: ${error}` : "",
           "",
           "Detailed logs were not available from the API endpoint.",
@@ -155,7 +157,7 @@ export function CompletionStep({
         {/* Metrics Summary Grid */}
         <motion.div
           variants={itemVariants}
-          className="w-full grid grid-cols-2 sm:grid-cols-4 gap-4 mb-10"
+          className="w-full grid grid-cols-2 sm:grid-cols-5 gap-4 mb-10"
         >
           {[
             {
@@ -181,6 +183,12 @@ export function CompletionStep({
               value: metrics.errors,
               color: "text-rose-400",
               border: "border-t-rose-500",
+            },
+            {
+              label: "Synthetic",
+              value: metrics.synthetic_emails_created,
+              color: "text-amber-400",
+              border: "border-t-amber-500",
             },
           ].map((m) => (
             <motion.div

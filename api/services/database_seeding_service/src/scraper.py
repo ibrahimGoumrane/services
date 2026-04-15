@@ -1,7 +1,9 @@
 """Main CSV processing and database seeding orchestrator."""
 
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 import pandas as pd
 
@@ -60,6 +62,7 @@ def process_database_seeding(
         "website_scraping_attempts": 0,
         "website_scraping_successes": 0,
         "contact_form_discoveries": 0,
+        "synthetic_emails_created": 0,
     }
 
     logger.info(f"Loading CSV from {config.csv_file_path}...")
@@ -176,6 +179,8 @@ def process_database_seeding(
                         stats["website_scraping_successes"] += 1
                     if row_stats.get("contact_form_found"):
                         stats["contact_form_discoveries"] += 1
+                    if row_stats.get("synthetic_email_used"):
+                        stats["synthetic_emails_created"] += 1
 
                 if contact_data is not None:
                     contact_batch.append(contact_data)
@@ -359,6 +364,7 @@ def _process_contact_row(
         "website_scraping_attempt": False,
         "website_scraping_success": False,
         "contact_form_found": False,
+        "synthetic_email_used": False,
     }
 
     csv_fullname_raw = (
@@ -382,14 +388,14 @@ def _process_contact_row(
 
     csv_email = (data_transformers.get_mapped_value(row, csv_mapping.get("email")) or "").strip().lower()
 
-    if not (csv_fullname or csv_fname or csv_lname or csv_company_name or csv_email):
-        logger.info("Skipped: row has none of fullname/fname/lname/name/email")
-        return None, row_stats
-
     row_input_website = (
         data_transformers.get_mapped_value(row, csv_mapping.get("url")) or ""
     ).strip()
     row_has_website_input = bool(row_input_website)
+
+    if not (csv_fullname or csv_fname or csv_lname or csv_company_name or csv_email or row_input_website):
+        logger.info("Skipped: row has none of fullname/fname/lname/name/email/url")
+        return None, row_stats
 
     enriched_email = csv_email
     enriched_website = row_input_website
@@ -455,14 +461,26 @@ def _process_contact_row(
             logger.warning(f"Web enrichment error: {exc}")
 
     if not enriched_email or "@" not in enriched_email:
-        logger.info("Skipped: no valid email after enrichment")
-        return None, row_stats
+        fallback_domain = _extract_domain_from_website(enriched_website)
+        if not fallback_domain:
+            fallback_domain = "nodomaine.com"
+
+        synthetic_user_id = uuid.uuid4().hex
+        enriched_email = f"{synthetic_user_id}-postmaster@{fallback_domain}"
+        row_stats["synthetic_email_used"] = True
+        logger.info(
+            "Synthetic fallback email generated: "
+            f"'{enriched_email}' (website_domain={'yes' if fallback_domain != 'nodomaine.com' else 'no'})"
+        )
 
     _, domain = enriched_email.split("@", 1)
     domain = domain.strip().lower()
     if not domain:
-        logger.info("Skipped: empty email domain")
-        return None, row_stats
+        logger.info("Email domain was empty; normalizing to nodomaine.com to preserve record")
+        local_part = enriched_email.split("@", 1)[0].strip() or f"{uuid.uuid4().hex}-postmaster"
+        domain = "nodomaine.com"
+        enriched_email = f"{local_part}@{domain}"
+        row_stats["synthetic_email_used"] = True
 
     is_generic_email, is_user_generic = email_classifiers.classify_email(
         enriched_email,
@@ -475,15 +493,17 @@ def _process_contact_row(
     mx_host = None
     mx_root = None
 
-    if not is_generic_email:
+    if not is_generic_email and not row_stats["synthetic_email_used"]:
         try:
             mx_host, mx_root = mx_resolver.resolve_mx_record(domain, mx_cache, new_mx_records)
             if not mx_host:
-                logger.info(f"Skipped: no valid MX record for domain '{domain}'")
-                return None, row_stats
+                logger.info(
+                    f"No valid MX record for domain '{domain}'; preserving row with discovered email"
+                )
         except Exception as exc:
-            logger.warning(f"MX resolution error for {domain}: {exc}")
-            return None, row_stats
+            logger.warning(
+                f"MX resolution error for {domain}: {exc}; preserving row with discovered email"
+            )
 
         if mx_root:
             mx_root_email = f"mx@{mx_root}"
@@ -549,6 +569,27 @@ def _process_contact_row(
     )
     
     return contact_tuple, row_stats
+
+
+def _extract_domain_from_website(website: Optional[str]) -> str:
+    """Extract normalized host domain from a website string."""
+    raw_website = (website or "").strip().lower()
+    if not raw_website:
+        return ""
+
+    candidate = raw_website if "://" in raw_website else f"https://{raw_website}"
+    parsed = urlparse(candidate)
+
+    host = (parsed.netloc or parsed.path or "").strip().lower()
+    if not host:
+        return ""
+
+    host = host.split("/", 1)[0]
+    host = host.split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+
+    return host
 
 
 def _insert_batch(

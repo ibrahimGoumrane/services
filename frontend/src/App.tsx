@@ -24,6 +24,7 @@ export function App() {
     inserted: 0,
     updated: 0,
     errors: 0,
+    synthetic_emails_created: 0,
   });
   const [finalLogs, setFinalLogs] = useState<LogEntry[]>([]);
   const [finalError, setFinalError] = useState<string | undefined>();
@@ -37,6 +38,7 @@ export function App() {
     inserted: Number(job.result?.inserted ?? 0),
     updated: Number(job.result?.updated ?? 0),
     errors: Array.isArray(job.result?.errors) ? job.result.errors.length : 0,
+    synthetic_emails_created: Number(job.result?.synthetic_emails_created ?? 0),
   });
 
   const refreshJobs = async () => {
