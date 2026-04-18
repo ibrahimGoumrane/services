@@ -22,7 +22,10 @@ Usage:
 from typing import Any
 
 from api.services.database_seeding_service.src.models import ProcessingConfig
-from api.services.database_seeding_service.src.scraper import process_database_seeding
+from api.services.database_seeding_service.src.scraper import (
+    process_database_seeding,
+    process_single_url_seeding,
+)
 
 
 def seed_database(config: ProcessingConfig, job_id: str | None = None) -> dict[str, Any]:
@@ -70,3 +73,20 @@ def seed_database(config: ProcessingConfig, job_id: str | None = None) -> dict[s
         >>> print(f"Inserted: {results['inserted']}, Updated: {results['updated']}")
     """
     return process_database_seeding(config, job_id=job_id)
+
+
+def seed_single_url(
+    url: str,
+    enable_web_scraping: bool = True,
+    skip_google_search: bool = False,
+    sourcefile: str | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """Run single URL scraping/enrichment and persist one contact-like record."""
+    return process_single_url_seeding(
+        url=url,
+        enable_web_scraping=enable_web_scraping,
+        skip_google_search=skip_google_search,
+        sourcefile=sourcefile,
+        job_id=job_id,
+    )

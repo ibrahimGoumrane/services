@@ -332,6 +332,140 @@ def process_database_seeding(
     return stats
 
 
+def process_single_url_seeding(
+    url: str,
+    enable_web_scraping: bool = True,
+    skip_google_search: bool = False,
+    sourcefile: str | None = None,
+    job_id: str | None = None,
+) -> Dict[str, Any]:
+    """Scrape one URL, save one record, and return a compact scraping result payload."""
+    global logger
+    logger = setup_logging(module_name="dbSeeder", job_id=job_id, buffer_size=1)
+
+    stats: Dict[str, Any] = {
+        "total_rows": 1,
+        "processed": 1,
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "emails_found": 0,
+        "websites_found": 1,
+        "mx_failed": 0,
+        "rows_skipped_no_required_field": 0,
+        "rows_skipped_invalid_mx": 0,
+        "rows_skipped_no_email_found": 0,
+        "errors": [],
+        "google_search_attempts": 0,
+        "google_search_successes": 0,
+        "website_scraping_attempts": 0,
+        "website_scraping_successes": 0,
+        "contact_form_discoveries": 0,
+        "synthetic_emails_created": 0,
+        "url_result": None,
+    }
+
+    logger.info(
+        "SEED_SINGLE_URL_START "
+        f"job_id={job_id or 'none'} "
+        f"url='{url}' "
+        f"web_scraping={'on' if enable_web_scraping else 'off'} "
+        f"google_search={'on' if (enable_web_scraping and not skip_google_search) else 'off'}"
+    )
+
+    validator: Optional[WebsiteEmailValidator] = None
+    start_time = time.time()
+
+    try:
+        generic_domains, generic_users, generic_mx, site_builder_domains, not_visiting_domains = _load_reference_data()
+
+        if enable_web_scraping:
+            validator = WebsiteEmailValidator(
+                skip_website_search=skip_google_search,
+                site_timeout_seconds=SITE_TIMEOUT_SECONDS,
+            )
+            validator.setup_driver()
+            validator.update_reference_filters(
+                generic_domains=generic_domains,
+                generic_users=generic_users,
+                site_builder_domains=site_builder_domains,
+                not_visiting_domains=not_visiting_domains,
+            )
+
+        row = {
+            "url": (url or "").strip(),
+        }
+        contact_data, row_stats = _process_contact_row(
+            row=row,
+            generic_domains=generic_domains,
+            generic_users=generic_users,
+            generic_mx=generic_mx,
+            site_builder_domains=site_builder_domains,
+            sourcefile=sourcefile or (url or "single-url"),
+            csv_mapping={"url": "url"},
+            default_values={},
+            mx_cache={},
+            new_mx_records=[],
+            validator=validator,
+        )
+
+        if row_stats.get("google_search_attempt"):
+            stats["google_search_attempts"] += 1
+        if row_stats.get("google_search_success"):
+            stats["google_search_successes"] += 1
+        if row_stats.get("website_scraping_attempt"):
+            stats["website_scraping_attempts"] += 1
+        if row_stats.get("website_scraping_success"):
+            stats["website_scraping_successes"] += 1
+        if row_stats.get("contact_form_found"):
+            stats["contact_form_discoveries"] += 1
+        if row_stats.get("synthetic_email_used"):
+            stats["synthetic_emails_created"] += 1
+
+        if contact_data is None:
+            stats["skipped"] = 1
+            stats["mx_failed"] = 1
+            stats["rows_skipped_no_email_found"] = 1
+            return stats
+
+        inserted, updated = contact_repository.batch_create_contacts([contact_data])
+        stats["inserted"] = inserted
+        stats["updated"] = updated
+        stats["emails_found"] = 1 if (contact_data[0] and "@" in str(contact_data[0])) else 0
+
+        stats["url_result"] = {
+            "email": contact_data[0],
+            "website": contact_data[4],
+            "phone": contact_data[6],
+            "city": contact_data[11],
+            "country": contact_data[13],
+            "contact_form_url": contact_data[14],
+            "status": "updated" if updated else "inserted",
+        }
+        return stats
+    except Exception as exc:
+        logger.error(f"Single URL processing failed: {exc}")
+        stats["errors"].append(str(exc))
+        stats["skipped"] = 1
+        return stats
+    finally:
+        if validator:
+            try:
+                validator.quit()
+            except Exception:
+                pass
+
+        elapsed = time.time() - start_time
+        logger.info(
+            "SEED_SINGLE_URL_END "
+            f"inserted={stats['inserted']} "
+            f"updated={stats['updated']} "
+            f"errors={len(stats['errors'])} "
+            f"elapsed={data_transformers.format_eta(elapsed)}"
+        )
+        flush_buffered_log_handlers(logger)
+
+
 def _process_contact_row(
     row: Any,
     generic_domains: Set[str],

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -67,6 +68,30 @@ class SeedDatabaseRequest(BaseModel):
             )
 
         return value
+
+
+class UrlScrapeRequest(BaseModel):
+    url: str
+    enable_web_scraping: bool = True
+    skip_google_search: bool = False
+    sourcefile: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        raw_value = (value or "").strip()
+        if not raw_value:
+            raise ValueError("url cannot be empty")
+
+        normalized = raw_value
+        if "://" not in normalized:
+            normalized = f"https://{normalized}"
+
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("url must be a valid http(s) URL")
+
+        return normalized
 
 
 class CreateJobResponse(BaseModel):

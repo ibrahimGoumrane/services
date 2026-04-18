@@ -1,15 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { StepIndicator } from "./components/StepIndicator";
 import { UploadStep } from "./components/UploadStep";
+import { SingleUrlStep } from "./components/SingleUrlStep";
 import { MappingStep } from "./components/MappingStep";
 import { ProcessingStep } from "./components/ProcessingStep";
 import { CompletionStep } from "./components/CompletionStep";
-import { createJob, fetchJobs } from "./lib/api";
-import { JobSettings, JobMetrics, JobSnapshot, LogEntry } from "./lib/types";
+import { createJob, createUrlJob, fetchJobStatus, fetchJobs } from "./lib/api";
+import {
+  JobSettings,
+  JobMetrics,
+  JobSnapshot,
+  LogEntry,
+  UrlScrapeResult,
+} from "./lib/types";
 import { Database, AlertCircle, ListChecks } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 export function App() {
   const [step, setStep] = useState(1);
+  const [flowMode, setFlowMode] = useState<"csv" | "url">("csv");
   // Job State
   const [csvInput, setCsvInput] = useState<File | string | null>(null);
   const [separator, setSeparator] = useState(",");
@@ -28,6 +36,9 @@ export function App() {
   });
   const [finalLogs, setFinalLogs] = useState<LogEntry[]>([]);
   const [finalError, setFinalError] = useState<string | undefined>();
+  const [finalUrlResult, setFinalUrlResult] = useState<UrlScrapeResult | null>(
+    null,
+  );
   // UI State
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -60,6 +71,9 @@ export function App() {
 
   const recoverJob = (job: JobSnapshot) => {
     setJobId(job.job_id);
+    setFinalUrlResult(
+      (job.result?.url_result as UrlScrapeResult | null) ?? null,
+    );
 
     if (job.status === "completed" || job.status === "failed") {
       setFinalStatus(job.status);
@@ -84,6 +98,20 @@ export function App() {
       ),
     [jobs],
   );
+
+  const switchFlowMode = (mode: "csv" | "url") => {
+    setFlowMode(mode);
+    setSubmitError(null);
+    setStep(1);
+    setCsvInput(null);
+    setHeaders([]);
+    setJobId(null);
+    setFinalStatus(null);
+    setFinalLogs([]);
+    setFinalError(undefined);
+    setFinalUrlResult(null);
+  };
+
   const handleUploadComplete = (
     selectedInput: File | string,
     selectedSeparator: string,
@@ -121,6 +149,28 @@ export function App() {
       setIsSubmitting(false);
     }
   };
+
+  const handleSingleUrlSubmit = async (url: string, settings: JobSettings) => {
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      const newJobId = await createUrlJob({
+        url,
+        enable_web_scraping: settings.enableWebScraping,
+        skip_google_search: settings.skipGoogleSearch,
+      });
+      setJobId(newJobId);
+      setStep(3);
+      void refreshJobs();
+    } catch (err) {
+      setSubmitError(
+        err instanceof Error ? err.message : "Failed to start URL job",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleJobComplete = (
     status: "completed" | "failed",
     metrics: JobMetrics,
@@ -132,6 +182,20 @@ export function App() {
     setFinalLogs(logs || []);
     setFinalError(error);
     setStep(4);
+
+    if (jobId) {
+      void fetchJobStatus(jobId)
+        .then((snapshot) => {
+          setFinalMetrics(toMetrics(snapshot));
+          setFinalError(snapshot.error ?? error);
+          setFinalUrlResult(
+            (snapshot.result?.url_result as UrlScrapeResult | null) ?? null,
+          );
+        })
+        .catch(() => {
+          // keep current UI values when final snapshot fetch fails
+        });
+    }
   };
   const resetWizard = () => {
     setStep(1);
@@ -141,7 +205,12 @@ export function App() {
     setFinalStatus(null);
     setFinalLogs([]);
     setFinalError(undefined);
+    setFinalUrlResult(null);
   };
+
+  const indicatorStep =
+    flowMode === "url" ? (step === 1 ? 1 : step === 4 ? 3 : 2) : step;
+
   return (
     <div className="min-h-screen flex flex-col font-sans relative overflow-hidden">
       {/* Header */}
@@ -166,7 +235,32 @@ export function App() {
 
       {/* Main Content */}
       <main className="flex-1 w-full max-w-5xl mx-auto px-6 py-10 flex flex-col relative z-10">
-        <StepIndicator currentStep={step} />
+        <div className="mb-6 inline-flex rounded-xl border border-slate-800/80 bg-slate-900/50 p-1">
+          <button
+            type="button"
+            onClick={() => switchFlowMode("csv")}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+              flowMode === "csv"
+                ? "bg-slate-700 text-slate-100"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => switchFlowMode("url")}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+              flowMode === "url"
+                ? "bg-slate-700 text-slate-100"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Single URL
+          </button>
+        </div>
+
+        <StepIndicator currentStep={indicatorStep} mode={flowMode} />
 
         <div className="mt-10 flex-1">
           {trackedJobs.length > 0 && (
@@ -214,37 +308,38 @@ export function App() {
           )}
 
           <AnimatePresence mode="wait">
-            {submitError && step === 2 && (
-              <motion.div
-                initial={{
-                  opacity: 0,
-                  y: -10,
-                }}
-                animate={{
-                  opacity: 1,
-                  y: 0,
-                }}
-                exit={{
-                  opacity: 0,
-                  y: -10,
-                }}
-                className="mb-8 flex items-start gap-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 text-rose-400 shadow-lg shadow-rose-500/5"
-              >
-                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="text-sm font-semibold text-rose-300">
-                    Failed to start job
-                  </h4>
-                  <p className="text-sm mt-1 opacity-80">{submitError}</p>
-                </div>
-              </motion.div>
-            )}
+            {submitError &&
+              (step === 2 || (flowMode === "url" && step === 1)) && (
+                <motion.div
+                  initial={{
+                    opacity: 0,
+                    y: -10,
+                  }}
+                  animate={{
+                    opacity: 1,
+                    y: 0,
+                  }}
+                  exit={{
+                    opacity: 0,
+                    y: -10,
+                  }}
+                  className="mb-8 flex items-start gap-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 text-rose-400 shadow-lg shadow-rose-500/5"
+                >
+                  <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-semibold text-rose-300">
+                      Failed to start job
+                    </h4>
+                    <p className="text-sm mt-1 opacity-80">{submitError}</p>
+                  </div>
+                </motion.div>
+              )}
           </AnimatePresence>
 
           <AnimatePresence mode="wait">
-            {step === 1 && (
+            {step === 1 && flowMode === "csv" && (
               <motion.div
-                key="step1"
+                key="step1-csv"
                 initial={{
                   opacity: 0,
                   y: 20,
@@ -266,7 +361,34 @@ export function App() {
               </motion.div>
             )}
 
-            {step === 2 && (
+            {step === 1 && flowMode === "url" && (
+              <motion.div
+                key="step1-url"
+                initial={{
+                  opacity: 0,
+                  y: 20,
+                }}
+                animate={{
+                  opacity: 1,
+                  y: 0,
+                }}
+                exit={{
+                  opacity: 0,
+                  y: -20,
+                }}
+                transition={{
+                  duration: 0.4,
+                  ease: "easeOut",
+                }}
+              >
+                <SingleUrlStep
+                  onSubmit={handleSingleUrlSubmit}
+                  isSubmitting={isSubmitting}
+                />
+              </motion.div>
+            )}
+
+            {step === 2 && flowMode === "csv" && (
               <motion.div
                 key="step2"
                 initial={{
@@ -345,6 +467,7 @@ export function App() {
                   metrics={finalMetrics}
                   logs={finalLogs}
                   error={finalError}
+                  urlResult={finalUrlResult}
                   onReset={resetWizard}
                 />
               </motion.div>

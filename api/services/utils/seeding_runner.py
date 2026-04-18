@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from api.services.database_seeding_service import seed_database
+from api.services.database_seeding_service import seed_database, seed_single_url
 from api.services.database_seeding_service.src.models import ProcessingConfig
 from api.services.database_seeding_service.src.utils.logging_config import (
     attach_websocket_log_handler,
@@ -29,8 +29,18 @@ async def run_seed_job(job_id: str) -> None:
         await ws_manager.send_event(job_id, "started", running_job.to_dict())
 
     try:
-        config = ProcessingConfig(**job.payload)
-        result = await asyncio.to_thread(seed_database, config, job_id)
+        if str(job.payload.get("job_type", "")).lower() == "single_url":
+            result = await asyncio.to_thread(
+                seed_single_url,
+                url=str(job.payload.get("target_url", "")),
+                enable_web_scraping=bool(job.payload.get("enable_web_scraping", True)),
+                skip_google_search=bool(job.payload.get("skip_google_search", False)),
+                sourcefile=job.payload.get("sourcefile"),
+                job_id=job_id,
+            )
+        else:
+            config = ProcessingConfig(**job.payload)
+            result = await asyncio.to_thread(seed_database, config, job_id)
         current_job = job_store.get_job(job_id)
         if current_job is not None and current_job.status == "paused":
             await ws_manager.send_event(job_id, "paused", current_job.to_dict())

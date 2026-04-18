@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import PlainTextResponse
 
-from api.models import CreateJobResponse, JobStatusResponse, SeedDatabaseRequest
+from api.models import CreateJobResponse, JobStatusResponse, SeedDatabaseRequest, UrlScrapeRequest
 from api.services.utils.job_manager import job_store
 from api.services.utils.seeding_runner import run_seed_job
 from api.services.utils.ws_manager import ws_manager
@@ -103,6 +103,23 @@ async def create_job(
         sourcefile=source_filename,
     ).model_dump()
     job_payload["csv_file_path"] = str(saved_path)
+
+    job = job_store.create_job(job_payload)
+    await ws_manager.send_event(job.job_id, "queued", job.to_dict())
+    asyncio.create_task(run_seed_job(job.job_id))
+
+    return CreateJobResponse(job_id=job.job_id, status=job.status)
+
+
+@router.post("/jobs/url", response_model=CreateJobResponse, status_code=status.HTTP_202_ACCEPTED)
+async def create_url_job(payload: UrlScrapeRequest) -> CreateJobResponse:
+    job_payload = {
+        "job_type": "single_url",
+        "target_url": payload.url,
+        "enable_web_scraping": payload.enable_web_scraping,
+        "skip_google_search": payload.skip_google_search,
+        "sourcefile": payload.sourcefile,
+    }
 
     job = job_store.create_job(job_payload)
     await ws_manager.send_event(job.job_id, "queued", job.to_dict())

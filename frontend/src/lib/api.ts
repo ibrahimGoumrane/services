@@ -1,4 +1,9 @@
-import { HeadersResponse, JobResponse, JobSnapshot } from "./types";
+import {
+  HeadersResponse,
+  JobResponse,
+  JobSnapshot,
+  UrlScrapeRequest,
+} from "./types";
 
 const BASE_URL = "http://127.0.0.1:8000";
 
@@ -56,6 +61,23 @@ export async function createJob(
 
   if (!response.ok) {
     throw new Error("Failed to create job");
+  }
+
+  const data: JobResponse = await response.json();
+  return data.job_id;
+}
+
+export async function createUrlJob(payload: UrlScrapeRequest): Promise<string> {
+  const response = await fetch(`${BASE_URL}/jobs/url`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to create URL job");
   }
 
   const data: JobResponse = await response.json();

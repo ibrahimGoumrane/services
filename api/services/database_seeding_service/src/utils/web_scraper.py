@@ -5,11 +5,14 @@ import logging
 import os
 import random
 import re
+import time
 from typing import Optional, List, Tuple
 from urllib.parse import urljoin, urlparse
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-import geograpy
+import spacy
+from geopy.exc import GeocoderServiceError, GeocoderTimedOut
+from geopy.geocoders import Nominatim  
 
 
 load_dotenv()
@@ -30,6 +33,103 @@ USER_AGENTS = [
 ]
 
 PHONE_REGEX = re.compile(r"(?<!\d)(?!\d{4}[-/]\d{2}[-/]\d{2}\b)(?:\+?\d[\d\s().\-/]{6,}\d)(?!\d)")
+CITY_TYPES = {"city", "town", "village", "municipality", "hamlet"}
+_SPACY_MODEL_NAME = "en_core_web_sm"
+
+_NLP = None
+_GEOCODER = None
+_GEOCODE_CACHE: dict[str, dict[str, Optional[str]]] = {}
+_LAST_GEOCODE_TS = 0.0
+
+
+def _get_spacy_nlp():
+    global _NLP
+    if _NLP is not None:
+        return _NLP
+
+    if spacy is None:
+        logger.warning("spaCy is not installed; geo extraction is disabled")
+        return None
+
+    try:
+        _NLP = spacy.load(_SPACY_MODEL_NAME)
+    except Exception as exc:
+        logger.warning(f"spaCy model '{_SPACY_MODEL_NAME}' is unavailable: {exc}")
+        _NLP = None
+
+    return _NLP
+
+
+def _get_geocoder():
+    global _GEOCODER
+    if _GEOCODER is not None:
+        return _GEOCODER
+
+    if Nominatim is None:
+        logger.warning("geopy is not installed; geo extraction is disabled")
+        return None
+
+    _GEOCODER = Nominatim(user_agent="formafast-address-extractor")
+    return _GEOCODER
+
+
+def _geocode_entity(entity_text: str) -> dict[str, Optional[str]]:
+    global _LAST_GEOCODE_TS
+
+    key = (entity_text or "").strip().lower()
+    if not key:
+        return {"city": None, "country": None}
+
+    if key in _GEOCODE_CACHE:
+        return _GEOCODE_CACHE[key]
+
+    geocoder = _get_geocoder()
+    if geocoder is None:
+        result = {"city": None, "country": None}
+        _GEOCODE_CACHE[key] = result
+        return result
+
+    now = time.monotonic()
+    wait_seconds = 1.0 - (now - _LAST_GEOCODE_TS)
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+
+    try:
+        location = geocoder.geocode(entity_text, addressdetails=True, language="en")
+    except (GeocoderTimedOut, GeocoderServiceError, Exception):
+        result = {"city": None, "country": None}
+        _GEOCODE_CACHE[key] = result
+        _LAST_GEOCODE_TS = time.monotonic()
+        return result
+
+    _LAST_GEOCODE_TS = time.monotonic()
+
+    if not location:
+        result = {"city": None, "country": None}
+        _GEOCODE_CACHE[key] = result
+        return result
+
+    addr = (location.raw or {}).get("address", {}) if isinstance(location.raw, dict) else {}
+    addresstype = (addr.get("addresstype") or addr.get("type") or "").strip().lower()
+
+    city = None
+    if addresstype in CITY_TYPES:
+        city = entity_text
+    elif isinstance(addr.get("city"), str):
+        city = addr.get("city")
+    elif isinstance(addr.get("town"), str):
+        city = addr.get("town")
+    elif isinstance(addr.get("village"), str):
+        city = addr.get("village")
+
+    country = addr.get("country") if isinstance(addr.get("country"), str) else None
+
+    result = {
+        "city": city.strip() if isinstance(city, str) and city.strip() else None,
+        "country": country.strip() if isinstance(country, str) and country.strip() else None,
+    }
+    _GEOCODE_CACHE[key] = result
+    return result
 
 
 class NoDriverDriver:
@@ -338,25 +438,45 @@ class PageScraper:
         return self._dedupe_preserve_order(candidates)
 
     def _extract_geo_from_visible_text(self, text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        """Extract (location, city, country) from visible text using geograpy3 when available."""
-        if not text or geograpy is None:
+        """Extract (location, city, country) from visible text using spaCy + Nominatim."""
+        if not text:
             return None, None, None
 
         try:
-            context = geograpy.get_place_context(text=text)
-            cities = list(getattr(context, "cities", []) or [])
-            countries = list(getattr(context, "countries", []) or [])
-            regions = list(getattr(context, "regions", []) or [])
+            nlp = _get_spacy_nlp()
+            if nlp is None:
+                return None, None, None
 
-            city = (cities[0] if cities else "") or ""
-            country = (countries[0] if countries else "") or ""
-            location = city or country or ((regions[0] if regions else "") or "")
+            doc = nlp(text)
+            entities: List[str] = []
+            seen = set()
+            for ent in doc.ents:
+                if ent.label_ != "GPE":
+                    continue
+                candidate = (ent.text or "").strip()
+                normalized = candidate.lower()
+                if not candidate or normalized in seen:
+                    continue
+                seen.add(normalized)
+                entities.append(candidate)
 
-            return (
-                location.strip() or None,
-                city.strip() or None,
-                country.strip() or None,
-            )
+            if not entities:
+                return None, None, None
+
+            city: Optional[str] = None
+            country: Optional[str] = None
+
+            for entity in entities:
+                geocoded = _geocode_entity(entity)
+                if not city and geocoded.get("city"):
+                    city = geocoded["city"]
+                if not country and geocoded.get("country"):
+                    country = geocoded["country"]
+                if city and country:
+                    break
+
+            location = city or country
+            return location, city, country
         except Exception:
             return None, None, None
 

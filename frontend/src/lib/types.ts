@@ -20,6 +20,22 @@ export interface JobSettings {
   skipGoogleSearch: boolean;
 }
 
+export interface UrlScrapeRequest {
+  url: string;
+  enable_web_scraping: boolean;
+  skip_google_search: boolean;
+}
+
+export interface UrlScrapeResult {
+  email?: string | null;
+  website?: string | null;
+  phone?: string | null;
+  city?: string | null;
+  country?: string | null;
+  contact_form_url?: string | null;
+  status?: "inserted" | "updated";
+}
+
 /**
  * Mapping value type for field mapping:
  * - "": Field is skipped (not mapped)
@@ -82,6 +98,7 @@ export interface JobResult {
   updated?: number;
   synthetic_emails_created?: number;
   errors?: string[];
+  url_result?: UrlScrapeResult | null;
 }
 
 export interface JobSnapshot {

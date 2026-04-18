@@ -1,0 +1,110 @@
+import { useState } from "react";
+import { Globe, Link2, Play, Settings2 } from "lucide-react";
+import { motion } from "framer-motion";
+import { JobSettings } from "../lib/types";
+
+interface SingleUrlStepProps {
+  onSubmit: (url: string, settings: JobSettings) => void;
+  isSubmitting: boolean;
+}
+
+export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
+  const [url, setUrl] = useState("");
+  const [settings, setSettings] = useState<JobSettings>({
+    batchSize: 1,
+    enableWebScraping: true,
+    skipGoogleSearch: false,
+  });
+
+  const canSubmit = !!url.trim() && !isSubmitting;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex flex-col gap-6 max-w-3xl"
+    >
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight text-slate-50">
+          Single URL Scraping
+        </h2>
+        <p className="text-sm font-medium text-slate-400 mt-2">
+          Enter one website URL to scrape contact data and store it directly in
+          the database.
+        </p>
+      </div>
+
+      <div className="glass-card rounded-2xl p-6 flex flex-col gap-5">
+        <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+          <Link2 className="w-4 h-4 text-violet-400" />
+          Website URL
+        </label>
+        <div className="relative">
+          <Globe className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            placeholder="example.com or https://example.com"
+            className="w-full bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-10 pr-4 py-3 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500"
+          />
+        </div>
+      </div>
+
+      <div className="glass-card rounded-2xl p-6">
+        <div className="mb-4 flex items-center gap-2 text-slate-300">
+          <Settings2 className="w-4 h-4 text-violet-400" />
+          <span className="text-sm font-semibold">Scraping Settings</span>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="flex items-center gap-3 rounded-xl border border-slate-700/60 bg-slate-900/40 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={settings.enableWebScraping}
+              onChange={(event) =>
+                setSettings((previous) => ({
+                  ...previous,
+                  enableWebScraping: event.target.checked,
+                }))
+              }
+              className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-violet-500"
+            />
+            <span className="text-sm font-medium text-slate-300">
+              Enable web scraping
+            </span>
+          </label>
+
+          <label className="flex items-center gap-3 rounded-xl border border-slate-700/60 bg-slate-900/40 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={settings.skipGoogleSearch}
+              onChange={(event) =>
+                setSettings((previous) => ({
+                  ...previous,
+                  skipGoogleSearch: event.target.checked,
+                }))
+              }
+              className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-violet-500"
+            />
+            <span className="text-sm font-medium text-slate-300">
+              Skip Google search fallback
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          disabled={!canSubmit}
+          onClick={() => onSubmit(url.trim(), settings)}
+          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition hover:shadow-violet-500/35 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Play className="w-4 h-4" />
+          {isSubmitting ? "Starting..." : "Start URL Job"}
+        </button>
+      </div>
+    </motion.div>
+  );
+}
