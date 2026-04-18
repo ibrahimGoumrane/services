@@ -1,6 +1,7 @@
 """Data access layer for contact and related database operations"""
 
 from typing import List, Tuple, Dict, Optional, Any
+from urllib.parse import urlparse
 import mysql.connector
 
 
@@ -315,6 +316,23 @@ def get_contact(email: str) -> Optional[Tuple]:
     cursor = conn.cursor()
     try:
         cursor.execute(f"SELECT {CONTACT_COLUMNS_SQL} FROM Gcontact WHERE email=%s", (email,))
+        return cursor.fetchone()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+
+def get_contact_by_url(url: str) -> Optional[Tuple]:
+    """Get one contact row by URL (exact match on normalized variants)."""
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"SELECT {CONTACT_COLUMNS_SQL} FROM Gcontact WHERE url=%s LIMIT 1",
+            (url,)
+        )
         return cursor.fetchone()
     finally:
         cursor.close()

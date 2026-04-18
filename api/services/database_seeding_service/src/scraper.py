@@ -443,6 +443,26 @@ def _process_contact_row(
             if enriched_website:
                 logger.info(f"Website enrichment on: '{enriched_website}'")
 
+                existing_contact = contact_repository.get_contact_by_url(enriched_website)
+                if existing_contact:
+                    logger.info(
+                        "Website already exists in DB; reusing stored contact fields before scraping"
+                    )
+                    if not enriched_email and existing_contact[0]:
+                        enriched_email = str(existing_contact[0]).strip().lower()
+                    if not phone and existing_contact[6]:
+                        phone = existing_contact[6]
+                    if not mobile and existing_contact[7]:
+                        mobile = existing_contact[7]
+                    if not fax and existing_contact[8]:
+                        fax = existing_contact[8]
+                    if not contact_form_url and existing_contact[14]:
+                        contact_form_url = existing_contact[14]
+                    if not geo_city and existing_contact[11]:
+                        geo_city = str(existing_contact[11]).strip()
+                    if not geo_country and existing_contact[13]:
+                        geo_country = str(existing_contact[13]).strip()
+
                 needs_site_lookup = (
                     not enriched_email
                     or not phone
