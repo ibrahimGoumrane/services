@@ -4,6 +4,8 @@ from typing import List, Tuple, Dict, Optional, Any
 from urllib.parse import urlparse
 import mysql.connector
 
+from .url_utils import extract_domain
+
 
 def get_connection():
     """Establish and return MySQL database connection"""
@@ -332,6 +334,38 @@ def get_contact_by_url(url: str) -> Optional[Tuple]:
         cursor.execute(
             f"SELECT {CONTACT_COLUMNS_SQL} FROM Gcontact WHERE url=%s LIMIT 1",
             (url,)
+        )
+        return cursor.fetchone()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_contact_by_domain(url: str) -> Optional[Tuple]:
+    """Get one contact row whose stored URL matches the same domain as the given URL."""
+    target_domain = extract_domain(url)
+    if not target_domain:
+        return None
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            f"""
+            SELECT {CONTACT_COLUMNS_SQL}
+            FROM Gcontact
+            WHERE url IS NOT NULL
+              AND url <> ''
+              AND (
+                  LOWER(url) LIKE %s
+                  OR LOWER(url) LIKE %s
+              )
+            LIMIT 1
+            """,
+            (
+                f"http://{target_domain}%",
+                f"https://{target_domain}%",
+            )
         )
         return cursor.fetchone()
     finally:

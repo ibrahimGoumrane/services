@@ -22,6 +22,157 @@ SITE_TIMEOUT_SECONDS = 30
 PERIODIC_BROWSER_RESTART_BATCHES = 10
 
 
+def _format_reference_preview(values: set[str], limit: int = 5) -> str:
+    preview = sorted((value for value in values if value), key=str.lower)[:limit]
+    if not preview:
+        return "[]"
+    suffix = "" if len(values) <= limit else f" ... (+{len(values) - limit} more)"
+    return f"{preview}{suffix}"
+
+
+def _slugify_for_email(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+
+    cleaned = []
+    previous_dot = False
+    for ch in raw:
+        if ch.isalnum():
+            cleaned.append(ch)
+            previous_dot = False
+            continue
+        if ch in {" ", ".", "-", "_"}:
+            if not previous_dot and cleaned:
+                cleaned.append(".")
+                previous_dot = True
+
+    token = "".join(cleaned).strip(".")
+    return token
+
+
+def _prefer_named_synthetic_email(
+    domain: str,
+    fname: str,
+    lname: str,
+    fullname: str,
+) -> Optional[str]:
+    if not domain or domain == "nodomaine.com":
+        return None
+
+    first_initial = (fname or "").strip().lower()[:1]
+    last_token = _slugify_for_email(lname)
+    if first_initial and last_token:
+        return f"{first_initial}.{last_token}@{domain}"
+
+    fullname_token = _slugify_for_email(fullname)
+    if fullname_token:
+        return f"{fullname_token}@{domain}"
+
+    return None
+
+
+def _is_domain_already_processed(domain: str) -> bool:
+    if not domain:
+        return False
+    return contact_repository.get_contact_by_domain(domain) is not None
+
+
+def _build_company_contact_tuple(
+    company_name: str,
+    company_url: str,
+    sourcefile: Optional[str],
+    csv_mapping: Dict[str, str],
+    row: Any,
+    default_values: Dict[str, Any],
+    generic_domains: Set[str],
+    generic_users: Set[str],
+    generic_mx: Set[str],
+    site_builder_domains: Set[str],
+    found_emails: List[str],
+    found_phones: List[str],
+    found_contact_page: Optional[str],
+    found_city: Optional[str],
+    found_country: Optional[str],
+    mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]],
+    new_mx_records: List[Tuple[str, str, str]],
+) -> Optional[Tuple]:
+    domain = _extract_domain_from_website(company_url)
+    if not domain:
+        return None
+
+    def _mapped_or_default(field: str, fallback: Any = "") -> Any:
+        value = data_transformers.get_mapped_value(row, csv_mapping.get(field))
+        if value is not None and str(value).strip() != "":
+            return value
+
+        default_value = default_values.get(field)
+        if default_value is not None and str(default_value).strip() != "":
+            return default_value
+
+        return fallback
+
+    selected_email = ""
+    for candidate in found_emails:
+        candidate_email = (candidate or "").strip().lower()
+        if candidate_email and "@" in candidate_email:
+            selected_email = candidate_email
+            break
+
+    if not selected_email:
+        company_local = _slugify_for_email(company_name) or "company"
+        selected_email = f"{company_local}@{domain}"
+
+    _, email_domain = selected_email.split("@", 1)
+    email_domain = (email_domain or "").strip().lower() or "nodomaine.com"
+
+    is_generic_email, is_user_generic = email_classifiers.classify_email(
+        selected_email,
+        generic_domains,
+        generic_users,
+        generic_mx,
+        site_builder_domains,
+    )
+
+    mx_host = None
+    if not is_generic_email:
+        try:
+            mx_host, _ = mx_resolver.resolve_mx_record(email_domain, mx_cache, new_mx_records)
+        except Exception:
+            mx_host = None
+
+    company_phone = (found_phones[0] if found_phones else None)
+
+    return (
+        selected_email,
+        None,
+        None,
+        None,
+        company_url,
+        _mapped_or_default("position", None),
+        company_phone,
+        None,
+        None,
+        company_name,
+        _mapped_or_default("address", None),
+        (found_city or "").strip() or None,
+        _mapped_or_default("zip", None),
+        (found_country or "").strip() or None,
+        found_contact_page or None,
+        _mapped_or_default("linkedin", None),
+        _mapped_or_default("image", None),
+        mx_host,
+        is_generic_email,
+        is_user_generic,
+        "valid",
+        _mapped_or_default("sourcefile", None) or sourcefile,
+        _mapped_or_default("ca", None),
+        _mapped_or_default("activite", "")
+        or _mapped_or_default("activité", "")
+        or _mapped_or_default("secteur", ""),
+    )
+
+
 def process_database_seeding(
     config: ProcessingConfig,
     job_id: str | None = None,
@@ -153,7 +304,7 @@ def process_database_seeding(
             stats["processed"] += 1
 
             try:
-                contact_data, row_stats = _process_contact_row(
+                contact_data, row_stats, extra_contacts, _ = _process_contact_row(
                     row=row,
                     generic_domains=generic_domains,
                     generic_users=generic_users,
@@ -181,6 +332,9 @@ def process_database_seeding(
                         stats["contact_form_discoveries"] += 1
                     if row_stats.get("synthetic_email_used"):
                         stats["synthetic_emails_created"] += 1
+
+                if extra_contacts:
+                    contact_batch.extend(extra_contacts)
 
                 if contact_data is not None:
                     contact_batch.append(contact_data)
@@ -231,6 +385,7 @@ def process_database_seeding(
                     batches_processed += 1
                     if validator:
                         try:
+                            logger.debug(f"Batch reset starting for batch {batches_processed}")
                             validator.prepare_next_batch()
                             logger.debug(f"Batch tab cleanup completed for batch {batches_processed}")
                         except Exception as exc:
@@ -262,6 +417,15 @@ def process_database_seeding(
                             site_builder_domains,
                             not_visiting_domains,
                         ) = _load_reference_data(log_prefix="Batch reference refresh")
+
+                        logger.debug(
+                            "Batch reference refresh values: "
+                            f"generic_domains={_format_reference_preview(generic_domains)}, "
+                            f"generic_users={_format_reference_preview(generic_users)}, "
+                            f"generic_mx={_format_reference_preview(generic_mx)}, "
+                            f"site_builder_domains={_format_reference_preview(site_builder_domains)}, "
+                            f"not_visiting_domains={_format_reference_preview(not_visiting_domains)}"
+                        )
 
                         if validator:
                             validator.update_reference_filters(
@@ -395,7 +559,7 @@ def process_single_url_seeding(
         row = {
             "url": (url or "").strip(),
         }
-        contact_data, row_stats = _process_contact_row(
+        contact_data, row_stats, extra_contacts, _ = _process_contact_row(
             row=row,
             generic_domains=generic_domains,
             generic_users=generic_users,
@@ -428,7 +592,8 @@ def process_single_url_seeding(
             stats["rows_skipped_no_email_found"] = 1
             return stats
 
-        inserted, updated = contact_repository.batch_create_contacts([contact_data])
+        single_url_contacts = [*extra_contacts, contact_data]
+        inserted, updated = contact_repository.batch_create_contacts(single_url_contacts)
         stats["inserted"] = inserted
         stats["updated"] = updated
         stats["emails_found"] = 1 if (contact_data[0] and "@" in str(contact_data[0])) else 0
@@ -478,7 +643,7 @@ def _process_contact_row(
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]],
     new_mx_records: List[Tuple[str, str, str]],
     validator: Optional[WebsiteEmailValidator] = None,
-) -> Tuple[Optional[Tuple], Dict[str, bool]]:
+) -> Tuple[Optional[Tuple], Dict[str, bool], List[Tuple], Set[str]]:
     """
     Process one row and return DB tuple, or None when row should be skipped.
     Also returns row-level statistics for tracking enrichment activities.
@@ -499,7 +664,14 @@ def _process_contact_row(
         "website_scraping_success": False,
         "contact_form_found": False,
         "synthetic_email_used": False,
+        "company_prefetch_attempt": False,
+        "company_prefetch_success": False,
+        "person_search_attempt": False,
+        "person_search_success": False,
+        "synthetic_email_rewritten": False,
     }
+    extra_contacts: List[Tuple] = []
+    row_domains: Set[str] = set()
 
     def _mapped_or_default(field: str, fallback: Any = "") -> Any:
         value = data_transformers.get_mapped_value(row, csv_mapping.get(field))
@@ -532,7 +704,7 @@ def _process_contact_row(
 
     if not (csv_fullname or csv_fname or csv_lname or csv_company_name or csv_email or row_input_website):
         logger.info("Skipped: row has none of fullname/fname/lname/name/email/url")
-        return None, row_stats
+        return None, row_stats, extra_contacts, row_domains
 
     enriched_email = csv_email
     enriched_website = row_input_website
@@ -562,6 +734,84 @@ def _process_contact_row(
                 logger.info(f"Website rejected by validator: {enriched_website}")
                 enriched_website = ""
 
+            can_search = (not row_has_website_input) and (not validator.skip_website_search)
+
+            if can_search and csv_company_name and location:
+                row_stats["company_prefetch_attempt"] = True
+                logger.info(
+                    "Company prefetch search attempt: "
+                    f"company='{csv_company_name}', location='{location}'"
+                )
+                company_result, _ = validator.google_search_business(csv_company_name, location=location)
+                if company_result and validator.validate_website(company_result):
+                    row_stats["company_prefetch_success"] = True
+                    company_domain = _extract_domain_from_website(company_result)
+                    if company_domain:
+                        row_domains.add(company_domain)
+                    if not enriched_website:
+                        enriched_website = company_result
+
+                    already_processed_company_domain = bool(
+                        company_domain and _is_domain_already_processed(company_domain)
+                    )
+                    logger.debug(
+                        f"Company prefetch domain check: domain='{company_domain or 'n/a'}' "
+                        f"already_processed={already_processed_company_domain}"
+                    )
+                    if not already_processed_company_domain:
+                        try:
+                            (
+                                company_found_emails,
+                                company_found_phones,
+                                company_contact_page,
+                                _,
+                                company_city,
+                                company_country,
+                            ) = validator.find_contact_info_on_website(company_result)
+
+                            company_contact = _build_company_contact_tuple(
+                                company_name=csv_company_name,
+                                company_url=company_result,
+                                sourcefile=sourcefile,
+                                csv_mapping=csv_mapping,
+                                row=row,
+                                default_values=default_values,
+                                generic_domains=generic_domains,
+                                generic_users=generic_users,
+                                generic_mx=generic_mx,
+                                site_builder_domains=site_builder_domains,
+                                found_emails=company_found_emails,
+                                found_phones=company_found_phones,
+                                found_contact_page=company_contact_page,
+                                found_city=company_city,
+                                found_country=company_country,
+                                mx_cache=mx_cache,
+                                new_mx_records=new_mx_records,
+                            )
+                            if company_contact is not None:
+                                extra_contacts.append(company_contact)
+                                logger.info(
+                                    "Company prefetch SUCCESS: staged separate company record "
+                                    f"for domain '{company_domain}'"
+                                )
+                        except Exception as exc:
+                            logger.warning(f"Company prefetch scraping error: {exc}")
+
+            needs_person_search = can_search and bool(csv_company_name) and bool(csv_fullname or (csv_fname and csv_lname))
+            if needs_person_search and (not enriched_email) and (not enriched_website):
+                person_seed = f"{csv_fullname or f'{csv_fname} {csv_lname}'.strip()} {csv_company_name}".strip()
+                if person_seed:
+                    row_stats["person_search_attempt"] = True
+                    logger.info(f"Person search attempt: seed='{person_seed}'")
+                    person_result, _ = validator.google_search_business(person_seed, location=None)
+                    if person_result and validator.validate_website(person_result):
+                        enriched_website = person_result
+                        row_stats["person_search_success"] = True
+                        person_domain = _extract_domain_from_website(person_result)
+                        if person_domain:
+                            row_domains.add(person_domain)
+                        logger.info(f"Person search SUCCESS: found website '{person_result}'")
+
             # Google search is ONLY for rows where client did not provide website input.
             if (not row_has_website_input) and (not enriched_website) and (not validator.skip_website_search) and search_seed:
                 row_stats["google_search_attempt"] = True
@@ -570,6 +820,9 @@ def _process_contact_row(
                 if google_result and validator.validate_website(google_result):
                     enriched_website = google_result
                     row_stats["google_search_success"] = True
+                    google_domain = _extract_domain_from_website(google_result)
+                    if google_domain:
+                        row_domains.add(google_domain)
                     logger.info(f"Google search SUCCESS: found website '{google_result}'")
                 else:
                     logger.info("Google search failed: no valid website found")
@@ -577,10 +830,14 @@ def _process_contact_row(
             if enriched_website:
                 logger.info(f"Website enrichment on: '{enriched_website}'")
 
-                existing_contact = contact_repository.get_contact_by_url(enriched_website)
+                website_domain = _extract_domain_from_website(enriched_website)
+                if website_domain:
+                    row_domains.add(website_domain)
+                logger.debug(f"Website reuse lookup domain: '{website_domain or 'n/a'}'")
+                existing_contact = contact_repository.get_contact_by_domain(enriched_website)
                 if existing_contact:
                     logger.info(
-                        "Website already exists in DB; reusing stored contact fields before scraping"
+                        "Website domain already exists in DB; reusing stored contact fields before scraping"
                     )
                     if not enriched_email and existing_contact[0]:
                         enriched_email = str(existing_contact[0]).strip().lower()
@@ -654,14 +911,51 @@ def _process_contact_row(
         fallback_domain = _extract_domain_from_website(enriched_website)
         if not fallback_domain:
             fallback_domain = "nodomaine.com"
+        should_rewrite = bool(
+            fallback_domain
+            and _is_domain_already_processed(fallback_domain)
+            and (csv_fullname or (csv_fname and csv_lname))
+        )
+        rewritten = None
+        if should_rewrite:
+            rewritten = _prefer_named_synthetic_email(
+                domain=fallback_domain,
+                fname=csv_fname,
+                lname=csv_lname,
+                fullname=csv_fullname,
+            )
 
-        synthetic_user_id = uuid.uuid4().hex
-        enriched_email = f"postmaster+{synthetic_user_id}@{fallback_domain}"
+        if rewritten:
+            enriched_email = rewritten
+            row_stats["synthetic_email_rewritten"] = True
+            logger.info(f"Synthetic fallback email rewritten from postmaster pattern to '{enriched_email}'")
+        else:
+            synthetic_user_id = uuid.uuid4().hex
+            enriched_email = f"postmaster+{synthetic_user_id}@{fallback_domain}"
         row_stats["synthetic_email_used"] = True
         logger.info(
             "Synthetic fallback email generated: "
             f"'{enriched_email}' (website_domain={'yes' if fallback_domain != 'nodomaine.com' else 'no'})"
         )
+
+    if "@" in enriched_email:
+        local_part, current_domain = enriched_email.split("@", 1)
+        local_part = (local_part or "").strip().lower()
+        current_domain = (current_domain or "").strip().lower()
+        if local_part.startswith("postmaster+") and _is_domain_already_processed(current_domain):
+            rewritten_existing = _prefer_named_synthetic_email(
+                domain=current_domain,
+                fname=csv_fname,
+                lname=csv_lname,
+                fullname=csv_fullname,
+            )
+            if rewritten_existing:
+                enriched_email = rewritten_existing
+                row_stats["synthetic_email_rewritten"] = True
+                logger.info(
+                    "Synthetic postmaster email rewritten using name fields: "
+                    f"'{enriched_email}'"
+                )
 
     _, domain = enriched_email.split("@", 1)
     domain = domain.strip().lower()
@@ -764,8 +1058,12 @@ def _process_contact_row(
         ca,
         activite,
     )
-    
-    return contact_tuple, row_stats
+
+    final_domain = _extract_domain_from_website(enriched_website)
+    if final_domain:
+        row_domains.add(final_domain)
+
+    return contact_tuple, row_stats, extra_contacts, row_domains
 
 
 def _extract_domain_from_website(website: Optional[str]) -> str:
@@ -852,6 +1150,14 @@ def _load_reference_data(log_prefix: str = "Loaded") -> tuple[
         f"{len(generic_mx)} generic MX records, "
         f"{len(site_builder_domains)} site builder domains, "
         f"{len(not_visiting_domains)} not-visiting domains"
+    )
+    logger.debug(
+        f"{log_prefix} values: "
+        f"generic_domains={_format_reference_preview(generic_domains)}, "
+        f"generic_users={_format_reference_preview(generic_users)}, "
+        f"generic_mx={_format_reference_preview(generic_mx)}, "
+        f"site_builder_domains={_format_reference_preview(site_builder_domains)}, "
+        f"not_visiting_domains={_format_reference_preview(not_visiting_domains)}"
     )
 
     return (
