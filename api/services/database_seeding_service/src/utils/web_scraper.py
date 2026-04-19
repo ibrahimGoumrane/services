@@ -239,6 +239,68 @@ class NoDriverDriver:
             return None
         return self._run(self.tab.evaluate(expression, return_by_value=return_by_value))
 
+    def select(self, selector: str, timeout: float = 10):
+        """Find a single element by CSS selector."""
+        if not self.tab:
+            return None
+        return self._run(self.tab.select(selector, timeout=timeout))
+
+    def find(self, text: str, best_match: bool = True, return_enclosing_element: bool = True, timeout: float = 10):
+        """Find a single element by visible text."""
+        if not self.tab:
+            return None
+        return self._run(
+            self.tab.find(
+                text,
+                best_match=best_match,
+                return_enclosing_element=return_enclosing_element,
+                timeout=timeout,
+            )
+        )
+
+    def send_keys(self, element, text: str) -> None:
+        """Send keys to a nodriver element and wait for completion."""
+        if element is None:
+            return
+        self._run(element.send_keys(text))
+
+    def click(self, element) -> None:
+        """Click a nodriver element and wait for completion."""
+        if element is None:
+            return
+        self._run(element.click())
+
+    def select(self, selector: str, timeout: float = 10):
+        """Find a single element by CSS selector."""
+        if not self.tab:
+            return None
+        return self._run(self.tab.select(selector, timeout=timeout))
+
+    def select_all(self, selector: str, timeout: float = 10, include_frames: bool = False):
+        """Find all elements by CSS selector."""
+        if not self.tab:
+            return []
+        return self._run(self.tab.select_all(selector, timeout=timeout, include_frames=include_frames))
+
+    def find(self, text: str, best_match: bool = True, return_enclosing_element: bool = True, timeout: float = 10):
+        """Find a single element by visible text."""
+        if not self.tab:
+            return None
+        return self._run(
+            self.tab.find(
+                text,
+                best_match=best_match,
+                return_enclosing_element=return_enclosing_element,
+                timeout=timeout,
+            )
+        )
+
+    def find_all(self, text: str, timeout: float = 10):
+        """Find all elements matching visible text."""
+        if not self.tab:
+            return []
+        return self._run(self.tab.find_all(text, timeout=timeout))
+
     def _list_tabs(self) -> List:
         if not self.browser:
             return []
