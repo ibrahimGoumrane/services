@@ -304,7 +304,7 @@ def process_database_seeding(
             stats["processed"] += 1
 
             try:
-                contact_data, row_stats, extra_contacts, _ = _process_contact_row(
+                contact_data, row_stats, extra_contacts = _process_contact_row(
                     row=row,
                     generic_domains=generic_domains,
                     generic_users=generic_users,
@@ -559,7 +559,7 @@ def process_single_url_seeding(
         row = {
             "url": (url or "").strip(),
         }
-        contact_data, row_stats, extra_contacts, _ = _process_contact_row(
+        contact_data, row_stats, extra_contacts = _process_contact_row(
             row=row,
             generic_domains=generic_domains,
             generic_users=generic_users,
@@ -643,7 +643,7 @@ def _process_contact_row(
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]],
     new_mx_records: List[Tuple[str, str, str]],
     validator: Optional[WebsiteEmailValidator] = None,
-) -> Tuple[Optional[Tuple], Dict[str, bool], List[Tuple], Set[str]]:
+) -> Tuple[Optional[Tuple], Dict[str, bool], List[Tuple]]:
     """
     Process one row and return DB tuple, or None when row should be skipped.
     Also returns row-level statistics for tracking enrichment activities.
@@ -664,14 +664,8 @@ def _process_contact_row(
         "website_scraping_success": False,
         "contact_form_found": False,
         "synthetic_email_used": False,
-        "company_prefetch_attempt": False,
-        "company_prefetch_success": False,
-        "person_search_attempt": False,
-        "person_search_success": False,
-        "synthetic_email_rewritten": False,
     }
     extra_contacts: List[Tuple] = []
-    row_domains: Set[str] = set()
 
     def _mapped_or_default(field: str, fallback: Any = "") -> Any:
         value = data_transformers.get_mapped_value(row, csv_mapping.get(field))
@@ -704,7 +698,7 @@ def _process_contact_row(
 
     if not (csv_fullname or csv_fname or csv_lname or csv_company_name or csv_email or row_input_website):
         logger.info("Skipped: row has none of fullname/fname/lname/name/email/url")
-        return None, row_stats, extra_contacts, row_domains
+        return None, row_stats, extra_contacts
 
     enriched_email = csv_email
     enriched_website = row_input_website
@@ -737,17 +731,13 @@ def _process_contact_row(
             can_search = (not row_has_website_input) and (not validator.skip_website_search)
 
             if can_search and csv_company_name and location:
-                row_stats["company_prefetch_attempt"] = True
                 logger.info(
                     "Company prefetch search attempt: "
                     f"company='{csv_company_name}', location='{location}'"
                 )
                 company_result, _ = validator.google_search_business(csv_company_name, location=location)
                 if company_result and validator.validate_website(company_result):
-                    row_stats["company_prefetch_success"] = True
                     company_domain = _extract_domain_from_website(company_result)
-                    if company_domain:
-                        row_domains.add(company_domain)
                     if not enriched_website:
                         enriched_website = company_result
 
@@ -801,16 +791,25 @@ def _process_contact_row(
             if needs_person_search and (not enriched_email) and (not enriched_website):
                 person_seed = f"{csv_fullname or f'{csv_fname} {csv_lname}'.strip()} {csv_company_name}".strip()
                 if person_seed:
-                    row_stats["person_search_attempt"] = True
                     logger.info(f"Person search attempt: seed='{person_seed}'")
                     person_result, _ = validator.google_search_business(person_seed, location=None)
                     if person_result and validator.validate_website(person_result):
-                        enriched_website = person_result
-                        row_stats["person_search_success"] = True
                         person_domain = _extract_domain_from_website(person_result)
-                        if person_domain:
-                            row_domains.add(person_domain)
-                        logger.info(f"Person search SUCCESS: found website '{person_result}'")
+                        already_processed_person_domain = bool(
+                            person_domain and _is_domain_already_processed(person_domain)
+                        )
+                        logger.debug(
+                            f"Person search domain check: domain='{person_domain or 'n/a'}' "
+                            f"already_processed={already_processed_person_domain}"
+                        )
+                        enriched_website = person_result
+                        if already_processed_person_domain:
+                            logger.info(
+                                "Person search matched an already processed domain; "
+                                "reusing DB values before any additional scraping"
+                            )
+                        else:
+                            logger.info(f"Person search SUCCESS: found website '{person_result}'")
 
             # Google search is ONLY for rows where client did not provide website input.
             if (not row_has_website_input) and (not enriched_website) and (not validator.skip_website_search) and search_seed:
@@ -818,12 +817,23 @@ def _process_contact_row(
                 logger.info(f"Google search attempt: seed='{search_seed}', location='{location}'")
                 google_result, _ = validator.google_search_business(search_seed, location=location)
                 if google_result and validator.validate_website(google_result):
+                    google_domain = _extract_domain_from_website(google_result)
+                    already_processed_google_domain = bool(
+                        google_domain and _is_domain_already_processed(google_domain)
+                    )
+                    logger.debug(
+                        f"Google search domain check: domain='{google_domain or 'n/a'}' "
+                        f"already_processed={already_processed_google_domain}"
+                    )
                     enriched_website = google_result
                     row_stats["google_search_success"] = True
-                    google_domain = _extract_domain_from_website(google_result)
-                    if google_domain:
-                        row_domains.add(google_domain)
-                    logger.info(f"Google search SUCCESS: found website '{google_result}'")
+                    if already_processed_google_domain:
+                        logger.info(
+                            "Google search matched an already processed domain; "
+                            "reusing DB values before any additional scraping"
+                        )
+                    else:
+                        logger.info(f"Google search SUCCESS: found website '{google_result}'")
                 else:
                     logger.info("Google search failed: no valid website found")
 
@@ -831,8 +841,6 @@ def _process_contact_row(
                 logger.info(f"Website enrichment on: '{enriched_website}'")
 
                 website_domain = _extract_domain_from_website(enriched_website)
-                if website_domain:
-                    row_domains.add(website_domain)
                 logger.debug(f"Website reuse lookup domain: '{website_domain or 'n/a'}'")
                 existing_contact = contact_repository.get_contact_by_domain(enriched_website)
                 if existing_contact:
@@ -913,7 +921,6 @@ def _process_contact_row(
             fallback_domain = "nodomaine.com"
         should_rewrite = bool(
             fallback_domain
-            and _is_domain_already_processed(fallback_domain)
             and (csv_fullname or (csv_fname and csv_lname))
         )
         rewritten = None
@@ -927,7 +934,6 @@ def _process_contact_row(
 
         if rewritten:
             enriched_email = rewritten
-            row_stats["synthetic_email_rewritten"] = True
             logger.info(f"Synthetic fallback email rewritten from postmaster pattern to '{enriched_email}'")
         else:
             synthetic_user_id = uuid.uuid4().hex
@@ -937,25 +943,6 @@ def _process_contact_row(
             "Synthetic fallback email generated: "
             f"'{enriched_email}' (website_domain={'yes' if fallback_domain != 'nodomaine.com' else 'no'})"
         )
-
-    if "@" in enriched_email:
-        local_part, current_domain = enriched_email.split("@", 1)
-        local_part = (local_part or "").strip().lower()
-        current_domain = (current_domain or "").strip().lower()
-        if local_part.startswith("postmaster+") and _is_domain_already_processed(current_domain):
-            rewritten_existing = _prefer_named_synthetic_email(
-                domain=current_domain,
-                fname=csv_fname,
-                lname=csv_lname,
-                fullname=csv_fullname,
-            )
-            if rewritten_existing:
-                enriched_email = rewritten_existing
-                row_stats["synthetic_email_rewritten"] = True
-                logger.info(
-                    "Synthetic postmaster email rewritten using name fields: "
-                    f"'{enriched_email}'"
-                )
 
     _, domain = enriched_email.split("@", 1)
     domain = domain.strip().lower()
@@ -1059,11 +1046,7 @@ def _process_contact_row(
         activite,
     )
 
-    final_domain = _extract_domain_from_website(enriched_website)
-    if final_domain:
-        row_domains.add(final_domain)
-
-    return contact_tuple, row_stats, extra_contacts, row_domains
+    return contact_tuple, row_stats, extra_contacts
 
 
 def _extract_domain_from_website(website: Optional[str]) -> str:
