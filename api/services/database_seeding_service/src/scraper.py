@@ -843,36 +843,36 @@ def _process_contact_row(
                 website_domain = _extract_domain_from_website(enriched_website)
                 logger.debug(f"Website reuse lookup domain: '{website_domain or 'n/a'}'")
                 existing_contact = contact_repository.get_contact_by_domain(enriched_website)
+                domain_already_processed = existing_contact is not None
+                
                 if existing_contact:
                     logger.info(
-                        "Website domain already exists in DB; reusing stored contact fields before scraping"
+                        "Website domain already exists in DB; reusing all stored contact fields"
                     )
-                    if not enriched_email and existing_contact[0]:
+                    # ✅ Reuse ALL available fields from existing contact (not just missing ones)
+                    if existing_contact[0]:
                         enriched_email = str(existing_contact[0]).strip().lower()
-                    if not phone and existing_contact[6]:
+                    if existing_contact[6]:
                         phone = existing_contact[6]
-                    if not mobile and existing_contact[7]:
+                    if existing_contact[7]:
                         mobile = existing_contact[7]
-                    if not fax and existing_contact[8]:
+                    if existing_contact[8]:
                         fax = existing_contact[8]
-                    if not contact_form_url and existing_contact[14]:
+                    if existing_contact[14]:
                         contact_form_url = existing_contact[14]
-                    if not geo_city and existing_contact[11]:
+                    if existing_contact[11]:
                         geo_city = str(existing_contact[11]).strip()
-                    if not geo_country and existing_contact[13]:
+                    if existing_contact[13]:
                         geo_country = str(existing_contact[13]).strip()
 
-                needs_site_lookup = (
-                    not enriched_email
-                    or not phone
-                    or not contact_form_url
-                    or not _mapped_or_default("city", "")
-                    or not _mapped_or_default("country", "")
-                )
+                # ✅ OPTIMIZATION: Only scrape if domain NOT already processed OR
+                # domain processed but critical fields (email/phone) are still missing from DB
 
-                if needs_site_lookup:
+
+                if not domain_already_processed:
                     row_stats["website_scraping_attempt"] = True
                     logger.info("Website scraping attempt: looking for email and phone")
+                    logger.info(f"Website scraping handoff start website='{enriched_website}'")
                     (
                         found_emails,
                         found_phones,
@@ -881,6 +881,11 @@ def _process_contact_row(
                         found_city,
                         found_country,
                     ) = validator.find_contact_info_on_website(enriched_website)
+                    logger.info(
+                        "Website scraping handoff done "
+                        f"website='{enriched_website}' emails={len(found_emails)} phones={len(found_phones)} "
+                        f"contact_page={found_contact_page!r} location={found_location!r} city={found_city!r} country={found_country!r}"
+                    )
 
                     geo_location = found_location or geo_location
                     geo_city = found_city or geo_city
@@ -911,6 +916,8 @@ def _process_contact_row(
                         row_stats["website_scraping_success"] = True
                     else:
                         logger.info("Website scraping failed: no valid email or phone found on website")
+                elif domain_already_processed:
+                    logger.info("Domain already processed; skipping redundant web scraping")
 
         except Exception as exc:
             logger.warning(f"Web enrichment error: {exc}")

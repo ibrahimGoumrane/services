@@ -1,17 +1,17 @@
 """High-level website and email validation orchestrator"""
 
 from typing import List, Optional, Tuple
-import logging
 
 from .web_scraper import NoDriverDriver, PageScraper
 from .web_searcher import GoogleSearcher
 from .email_validators import EmailValidator
 from .url_utils import validate_website_http
+from .logging_config import get_logger
 
 from . import contact_repository
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger("dbSeeder.website_validator")
 
 
 class WebsiteEmailValidator:
@@ -157,7 +157,14 @@ class WebsiteEmailValidator:
             logger.error("Scraper not initialized. Call setup_driver() first.")
             return [], [], None, None, None, None
 
-        return self.scraper.find_contact_info_on_website(website_url)
+        logger.info(f"[validator] find_contact_info_on_website start website_url={website_url}")
+        result = self.scraper.find_contact_info_on_website(website_url)
+        logger.info(
+            f"[validator] find_contact_info_on_website done website_url={website_url} "
+            f"emails={len(result[0])} phones={len(result[1])} contact_page={result[2]!r} "
+            f"location={result[3]!r} city={result[4]!r} country={result[5]!r}"
+        )
+        return result
 
 
 

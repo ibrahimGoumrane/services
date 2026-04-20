@@ -1,369 +1,24 @@
-"""NoDriver browser management and page scraping utilities"""
+"""Page scraping utilities using NoDriver"""
 
-import asyncio
-import logging
-import os
-import random
 import re
-import time
 from typing import Optional, List, Tuple
 from urllib.parse import urljoin, urlparse
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
-import spacy
-from geopy.exc import GeocoderServiceError, GeocoderTimedOut
-from geopy.geocoders import Nominatim  
 
 
 load_dotenv()
-import nodriver as uc
 
-
+from .nodriver import NoDriverDriver
+from .geo_extractor import extract_location_city_country
 from .url_utils import normalize_url, validate_website_http
 from .email_extractors import extract_emails_from_text
+from .logging_config import get_logger
 
 
-logger = logging.getLogger(__name__)
-
-# User agents for rotation
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 OPR/105.0.0.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OPR/106.0.0.0',
-]
+logger = get_logger("dbSeeder.web_scraper")
 
 PHONE_REGEX = re.compile(r"(?<!\d)(?!\d{4}[-/]\d{2}[-/]\d{2}\b)(?:\+?\d[\d\s().\-/]{6,}\d)(?!\d)")
-CITY_TYPES = {"city", "town", "village", "municipality", "hamlet"}
-_SPACY_MODEL_NAME = "en_core_web_sm"
-
-_NLP = None
-_GEOCODER = None
-_GEOCODE_CACHE: dict[str, dict[str, Optional[str]]] = {}
-_LAST_GEOCODE_TS = 0.0
-
-
-def _get_spacy_nlp():
-    global _NLP
-    if _NLP is not None:
-        return _NLP
-
-    if spacy is None:
-        logger.warning("spaCy is not installed; geo extraction is disabled")
-        return None
-
-    try:
-        _NLP = spacy.load(_SPACY_MODEL_NAME)
-    except Exception as exc:
-        logger.warning(f"spaCy model '{_SPACY_MODEL_NAME}' is unavailable: {exc}")
-        _NLP = None
-
-    return _NLP
-
-
-def _get_geocoder():
-    global _GEOCODER
-    if _GEOCODER is not None:
-        return _GEOCODER
-
-    if Nominatim is None:
-        logger.warning("geopy is not installed; geo extraction is disabled")
-        return None
-
-    _GEOCODER = Nominatim(user_agent="formafast-address-extractor")
-    return _GEOCODER
-
-
-def _geocode_entity(entity_text: str) -> dict[str, Optional[str]]:
-    global _LAST_GEOCODE_TS
-
-    key = (entity_text or "").strip().lower()
-    if not key:
-        return {"city": None, "country": None}
-
-    if key in _GEOCODE_CACHE:
-        return _GEOCODE_CACHE[key]
-
-    geocoder = _get_geocoder()
-    if geocoder is None:
-        result = {"city": None, "country": None}
-        _GEOCODE_CACHE[key] = result
-        return result
-
-    now = time.monotonic()
-    wait_seconds = 1.0 - (now - _LAST_GEOCODE_TS)
-    if wait_seconds > 0:
-        time.sleep(wait_seconds)
-
-    try:
-        location = geocoder.geocode(entity_text, addressdetails=True, language="en")
-    except (GeocoderTimedOut, GeocoderServiceError, Exception):
-        result = {"city": None, "country": None}
-        _GEOCODE_CACHE[key] = result
-        _LAST_GEOCODE_TS = time.monotonic()
-        return result
-
-    _LAST_GEOCODE_TS = time.monotonic()
-
-    if not location:
-        result = {"city": None, "country": None}
-        _GEOCODE_CACHE[key] = result
-        return result
-
-    addr = (location.raw or {}).get("address", {}) if isinstance(location.raw, dict) else {}
-    addresstype = (addr.get("addresstype") or addr.get("type") or "").strip().lower()
-
-    city = None
-    if addresstype in CITY_TYPES:
-        city = entity_text
-    elif isinstance(addr.get("city"), str):
-        city = addr.get("city")
-    elif isinstance(addr.get("town"), str):
-        city = addr.get("town")
-    elif isinstance(addr.get("village"), str):
-        city = addr.get("village")
-
-    country = addr.get("country") if isinstance(addr.get("country"), str) else None
-
-    result = {
-        "city": city.strip() if isinstance(city, str) and city.strip() else None,
-        "country": country.strip() if isinstance(country, str) and country.strip() else None,
-    }
-    _GEOCODE_CACHE[key] = result
-    return result
-
-
-class NoDriverDriver:
-    """Manages nodriver browser lifecycle and anti-bot-friendly defaults"""
-    
-    def __init__(self):
-        """Initialize nodriver manager"""
-        self.browser = None
-        self.tab = None
-        self._loop = None
-        self._restart_epoch = 0
-        self._last_health_restart_epoch = 0
-
-    def _run(self, coro, timeout_seconds: Optional[float] = None):
-        """Execute nodriver coroutine in the dedicated event loop."""
-        if not self._loop:
-            raise RuntimeError("Driver loop not initialized. Call setup() first.")
-        if timeout_seconds and timeout_seconds > 0:
-            return self._loop.run_until_complete(asyncio.wait_for(coro, timeout=timeout_seconds))
-        return self._loop.run_until_complete(coro)
-
-    @property
-    def current_url(self) -> str:
-        """Return current tab URL when available."""
-        if not self.tab or not getattr(self.tab, "target", None):
-            return ""
-        return str(getattr(self.tab.target, "url", "") or "")
-    
-    def setup(self) -> None:
-        """Initialize nodriver browser and a reusable tab."""
-        logger.info("Setting up NoDriver browser...")
-        user_agent = random.choice(USER_AGENTS)
-        logger.info(f"Using user agent: {user_agent[:50]}...")
-
-        headless = os.getenv("NODRIVER_HEADLESS", "false").lower() in {"1", "true", "yes"}
-        browser_args = [
-            f"--user-agent={user_agent}",
-            "--disable-dev-shm-usage",
-        ]
-
-        try:
-            self._loop = uc.loop()
-            self.browser = self._run(uc.start(headless=headless, browser_args=browser_args))
-
-            # Warm up the browser session on Google before normal crawling.
-            try:
-                self.tab = self._run(self.browser.get("https://www.google.com"))
-                self._run(self.tab.sleep(random.uniform(1.0, 1.6)))
-            except Exception as warmup_exc:
-                logger.debug(f"Google warmup step failed: {warmup_exc}")
-
-            self.tab = self._run(self.browser.get("about:blank"))
-
-            width = random.randint(1366, 1920)
-            height = random.randint(768, 1080)
-            try:
-                self._run(self.tab.set_window_size(width=width, height=height))
-            except Exception:
-                pass
-
-            logger.info("✅ NoDriver browser initialized successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize NoDriver browser: {e}")
-            raise
-    
-    def restart(self, reason: str = "manual") -> None:
-        """Restart the browser if unresponsive."""
-        logger.warning("⚠️ Restarting NoDriver browser...")
-        try:
-            self.quit()
-        except Exception:
-            pass
-        self.setup()
-        self._restart_epoch += 1
-        if reason == "health":
-            self._last_health_restart_epoch = self._restart_epoch
-
-    @property
-    def restart_epoch(self) -> int:
-        return self._restart_epoch
-
-    def had_health_restart_since(self, since_epoch: int) -> bool:
-        return self._last_health_restart_epoch > since_epoch
-
-    def get(self, url: str, timeout_seconds: Optional[float] = None) -> None:
-        """Navigate the current tab to the given URL."""
-        if not self.tab:
-            raise RuntimeError("Tab not initialized. Call setup() first.")
-        self._run(self.tab.get(url), timeout_seconds=timeout_seconds)
-
-    def sleep(self, seconds: float) -> None:
-        """Async-aware sleep on the active tab."""
-        if not self.tab:
-            return
-        self._run(self.tab.sleep(seconds))
-
-    def get_content(self, timeout_seconds: Optional[float] = None) -> str:
-        """Fetch current page HTML."""
-        if not self.tab:
-            return ""
-        content = self._run(self.tab.get_content(), timeout_seconds=timeout_seconds)
-        return str(content or "")
-
-    def evaluate(self, expression: str, return_by_value: bool = True):
-        """Evaluate JavaScript expression in current tab."""
-        if not self.tab:
-            return None
-        return self._run(self.tab.evaluate(expression, return_by_value=return_by_value))
-
-    def select(self, selector: str, timeout: float = 10):
-        """Find a single element by CSS selector."""
-        if not self.tab:
-            return None
-        return self._run(self.tab.select(selector, timeout=timeout))
-
-    def find(self, text: str, best_match: bool = True, return_enclosing_element: bool = True, timeout: float = 10):
-        """Find a single element by visible text."""
-        if not self.tab:
-            return None
-        return self._run(
-            self.tab.find(
-                text,
-                best_match=best_match,
-                return_enclosing_element=return_enclosing_element,
-                timeout=timeout,
-            )
-        )
-
-    def send_keys(self, element, text: str) -> None:
-        """Send keys to a nodriver element and wait for completion."""
-        if element is None:
-            return
-        self._run(element.send_keys(text))
-
-    def click(self, element) -> None:
-        """Click a nodriver element and wait for completion."""
-        if element is None:
-            return
-        self._run(element.click())
-
-    def select(self, selector: str, timeout: float = 10):
-        """Find a single element by CSS selector."""
-        if not self.tab:
-            return None
-        return self._run(self.tab.select(selector, timeout=timeout))
-
-    def select_all(self, selector: str, timeout: float = 10, include_frames: bool = False):
-        """Find all elements by CSS selector."""
-        if not self.tab:
-            return []
-        return self._run(self.tab.select_all(selector, timeout=timeout, include_frames=include_frames))
-
-    def find(self, text: str, best_match: bool = True, return_enclosing_element: bool = True, timeout: float = 10):
-        """Find a single element by visible text."""
-        if not self.tab:
-            return None
-        return self._run(
-            self.tab.find(
-                text,
-                best_match=best_match,
-                return_enclosing_element=return_enclosing_element,
-                timeout=timeout,
-            )
-        )
-
-    def find_all(self, text: str, timeout: float = 10):
-        """Find all elements matching visible text."""
-        if not self.tab:
-            return []
-        return self._run(self.tab.find_all(text, timeout=timeout))
-
-    def _list_tabs(self) -> List:
-        if not self.browser:
-            return []
-
-        tabs = getattr(self.browser, "tabs", None)
-        if isinstance(tabs, dict):
-            return [tab for tab in tabs.values() if tab is not None]
-        if isinstance(tabs, list):
-            return [tab for tab in tabs if tab is not None]
-        if tabs:
-            return [tabs]
-        return [self.tab] if self.tab else []
-
-    def cleanup_tabs_for_next_batch(self) -> None:
-        """Close popups/new tabs and reset to a clean working tab between batches."""
-        if not self.browser:
-            return
-
-        tabs = self._list_tabs()
-        primary_tab = self.tab or (tabs[0] if tabs else None)
-        closed_tabs = 0
-        close_errors = 0
-
-        for tab in tabs:
-            if tab is None or tab is primary_tab:
-                continue
-            try:
-                self._run(tab.close())
-                closed_tabs += 1
-            except Exception:
-                close_errors += 1
-                continue
-
-        try:
-            self.tab = self._run(self.browser.get("about:blank"))
-            logger.debug(f"Batch tab reset succeeded (closed_tabs={closed_tabs})")
-        except Exception:
-            self.tab = primary_tab
-            try:
-                self.get("about:blank")
-            except Exception:
-                pass
-
-        if close_errors > 0:
-            logger.debug(f"Batch tab cleanup had close errors (errors={close_errors})")
-    
-    def quit(self) -> None:
-        """Close the browser and clean up loop resources."""
-        try:
-            if self.browser:
-                self.browser.stop()
-                logger.info("NoDriver browser closed")
-        except Exception as e:
-            logger.warning(f"Error closing browser: {e}")
-        finally:
-            self.browser = None
-            self.tab = None
-            if self._loop:
-                try:
-                    self._loop.close()
-                except Exception:
-                    pass
-                self._loop = None
 
 
 class PageScraper:
@@ -499,78 +154,38 @@ class PageScraper:
 
         return self._dedupe_preserve_order(candidates)
 
-    def _extract_geo_from_visible_text(self, text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-        """Extract (location, city, country) from visible text using spaCy + Nominatim."""
-        if not text:
-            return None, None, None
 
-        try:
-            nlp = _get_spacy_nlp()
-            if nlp is None:
-                return None, None, None
-
-            doc = nlp(text)
-            entities: List[str] = []
-            seen = set()
-            for ent in doc.ents:
-                if ent.label_ != "GPE":
-                    continue
-                candidate = (ent.text or "").strip()
-                normalized = candidate.lower()
-                if not candidate or normalized in seen:
-                    continue
-                seen.add(normalized)
-                entities.append(candidate)
-
-            if not entities:
-                return None, None, None
-
-            city: Optional[str] = None
-            country: Optional[str] = None
-
-            for entity in entities:
-                geocoded = _geocode_entity(entity)
-                if not city and geocoded.get("city"):
-                    city = geocoded["city"]
-                if not country and geocoded.get("country"):
-                    country = geocoded["country"]
-                if city and country:
-                    break
-
-            location = city or country
-            return location, city, country
-        except Exception:
-            return None, None, None
 
     def _scrape_page_contact_data(self, url: str) -> Tuple[List[str], List[str], str]:
-        if self.prevalidate_http and not validate_website_http(
+        logger.info(f"[scrape] start url={url}")
+        # ALWAYS pre-validate before browser navigation to avoid hanging on anti-bot responses (e.g., 999)
+        if not validate_website_http(
             url,
             timeout=3,
             excluded_domains=self.excluded_domains,
         ):
-            logger.warning(f"⏭️ Skipping URL rejected by validator: {url}")
+            logger.warning(f"✗ Website returned status 999: {url}")
             return [], [], ""
 
-        logger.info(f"Searching for contact data on: {url}")
+        logger.info(f"[scrape] http ok, navigating url={url}")
         self.driver.get(url, timeout_seconds=self.site_timeout_seconds)
+        logger.info(f"[scrape] navigation complete url={url}")
         self.driver.sleep(1.0)
 
         current_url = self.driver.current_url
-        if not validate_website_http(
-            current_url,
-            timeout=3,
-            excluded_domains=self.excluded_domains,
-        ):
-            logger.warning(f"⏭️ Skipping page URL rejected by validator: {current_url}")
-            return [], [], ""
-
+        logger.debug(f"[scrape] current_url={current_url}")
+        
+        logger.info(f"[scrape] accepting cookies url={url}")
         self.accept_cookies()
         self.driver.sleep(1.0)
 
+        logger.info(f"[scrape] reading content url={url}")
         page_html = self.driver.get_content(timeout_seconds=self.site_timeout_seconds)
+        logger.info(f"[scrape] content length={len(page_html or '')} url={url}")
         emails = self._dedupe_preserve_order(extract_emails_from_text(page_html))
         visible_text = self._extract_visible_text(page_html)
         phones = self._extract_phone_numbers_from_text(visible_text)
+        logger.info(f"[scrape] done url={url} emails={len(emails)} phones={len(phones)}")
         return emails, phones, page_html
     
     def find_contact_page(self, base_url: str) -> Optional[str]:
@@ -618,6 +233,7 @@ class PageScraper:
             return [], [], None, None, None, None
 
         website_url = normalize_url(website_url)
+        logger.info(f"[contact-flow] start website_url={website_url}")
         all_emails: List[str] = []
         all_phones: List[str] = []
         selected_contact_page: Optional[str] = None
@@ -626,24 +242,34 @@ class PageScraper:
         extracted_country: Optional[str] = None
 
         try:
+            logger.info(f"[contact-flow] scraping homepage website_url={website_url}")
             homepage_emails, homepage_phones, homepage_html = self._scrape_page_contact_data(website_url)
             all_emails.extend(homepage_emails)
             all_phones.extend(homepage_phones)
+            logger.info(
+                f"[contact-flow] homepage result website_url={website_url} emails={len(homepage_emails)} phones={len(homepage_phones)} html_chars={len(homepage_html or '')}"
+            )
 
-            homepage_visible_text = self._extract_visible_text(homepage_html)
-            loc, city, country = self._extract_geo_from_visible_text(homepage_visible_text)
+            logger.info(f"[contact-flow] geo extract homepage website_url={website_url}")
+            loc, city, country = extract_location_city_country(page_url=website_url, html=homepage_html)
             extracted_location = extracted_location or loc
             extracted_city = extracted_city or city
             extracted_country = extracted_country or country
+            logger.info(
+                f"[contact-flow] homepage geo website_url={website_url} location={extracted_location!r} city={extracted_city!r} country={extracted_country!r}"
+            )
 
             contact_candidates = self._extract_contact_links_from_home_html(website_url, homepage_html)
+            logger.info(f"[contact-flow] contact candidates found={len(contact_candidates)} website_url={website_url}")
             for candidate in contact_candidates:
+                logger.debug(f"[contact-flow] validating contact candidate={candidate}")
                 if validate_website_http(
                     candidate,
                     timeout=2,
                     excluded_domains=self.excluded_domains,
                 ):
                     selected_contact_page = candidate
+                    logger.info(f"[contact-flow] selected contact page={selected_contact_page}")
                     break
 
             has_email = bool(all_emails)
@@ -654,36 +280,48 @@ class PageScraper:
                 logger.debug("At least one value missing on homepage; checking contact pages")
                 for contact_url in contact_candidates:
                     try:
+                        logger.info(f"[contact-flow] scraping contact page={contact_url}")
                         if not validate_website_http(
                             contact_url,
                             timeout=2,
                             excluded_domains=self.excluded_domains,
                         ):
+                            logger.info(f"[contact-flow] contact page rejected by validator={contact_url}")
                             continue
 
                         if not selected_contact_page:
                             selected_contact_page = contact_url
 
-                        contact_emails, contact_phones, _ = self._scrape_page_contact_data(contact_url)
+                        contact_emails, contact_phones, contact_html = self._scrape_page_contact_data(contact_url)
                         all_emails.extend(contact_emails)
                         all_phones.extend(contact_phones)
+                        logger.info(
+                            f"[contact-flow] contact page result url={contact_url} emails={len(contact_emails)} phones={len(contact_phones)} html_chars={len(contact_html or '')}"
+                        )
 
                         if not (extracted_location and extracted_city and extracted_country):
-                            contact_visible_text = self._extract_visible_text(_)
-                            loc2, city2, country2 = self._extract_geo_from_visible_text(contact_visible_text)
+                            logger.info(f"[contact-flow] geo extract contact page={contact_url}")
+                            loc2, city2, country2 = extract_location_city_country(page_url=contact_url, html=contact_html)
                             extracted_location = extracted_location or loc2
                             extracted_city = extracted_city or city2
                             extracted_country = extracted_country or country2
+                            logger.info(
+                                f"[contact-flow] contact geo url={contact_url} location={extracted_location!r} city={extracted_city!r} country={extracted_country!r}"
+                            )
 
                         has_email = bool(all_emails)
                         has_phone = bool(all_phones)
                         if has_email and has_phone:
                             break
                     except Exception:
+                        logger.exception(f"[contact-flow] contact page scrape failed url={contact_url}")
                         continue
 
             all_emails = self._dedupe_preserve_order(all_emails)
             all_phones = self._dedupe_preserve_order(all_phones)
+            logger.info(
+                f"[contact-flow] done website_url={website_url} emails={len(all_emails)} phones={len(all_phones)} contact_page={selected_contact_page!r} location={extracted_location!r} city={extracted_city!r} country={extracted_country!r}"
+            )
             return (
                 all_emails,
                 all_phones,
@@ -698,6 +336,7 @@ class PageScraper:
             return [], [], None, None, None, None
         finally:
             try:
+                logger.info(f"[contact-flow] resetting browser to about:blank website_url={website_url}")
                 self.driver.get("about:blank")
             except Exception:
                 pass
