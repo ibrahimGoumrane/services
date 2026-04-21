@@ -243,16 +243,6 @@ class WebsiteEmailValidator:
         except Exception as exc:
             logger.debug(f"restart_browser failed (reason={reason}): {exc}")
             raise
-
-    def restart_epoch(self) -> int:
-        if not self.driver:
-            return 0
-        return self.driver.restart_epoch
-
-    def had_health_restart_since(self, since_epoch: int) -> bool:
-        if not self.driver:
-            return False
-        return self.driver.had_health_restart_since(since_epoch)
     
     def quit(self) -> None:
         """Close WebDriver and cleanup"""

@@ -1,20 +1,22 @@
 """Google search automation utilities"""
 
 import logging
-import time
 import random
+import time
 import unicodedata
-from urllib.parse import quote_plus, urlparse, parse_qs
-from typing import Tuple, Optional, List, Dict
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, quote_plus, urlparse
+
 from bs4 import BeautifulSoup
 
 from .url_utils import validate_website_http
 from .web_scraper import NoDriverDriver
 
+
 logger = logging.getLogger(__name__)
 
-# ── Constants ────────────────────────────────────────────────────────────────
 _SEARCH_FIELD_SELECTOR = 'textarea[name="q"], input[name="q"], #APjFqb'
+
 _LOCAL_ACTION_MAP: Dict[str, str] = {
     "website":       "website",
     "site web":      "website",
@@ -28,192 +30,254 @@ _LOCAL_ACTION_MAP: Dict[str, str] = {
     "itineraires":   "directions",
 }
 
+# Phrases present on Google's CAPTCHA / unusual-traffic interstitial
+_GOOGLE_CAPTCHA_PHRASES = (
+    "unusual traffic",
+    "notre système a détecté",
+    "i'm not a robot",
+    "recaptcha",
+    "verify you are human",
+)
+
+
 class GoogleSearcher:
-    """Handles Google search automation with anti-bot measures (nodriver backend)."""
+    """Google search automation with anti-bot measures (nodriver backend)."""
 
     def __init__(
         self,
         driver: NoDriverDriver,
         excluded_domains: Optional[List[str]] = None,
-        generic_domains:  Optional[List[str]] = None,
+        generic_domains: Optional[List[str]] = None,
         site_timeout_seconds: int = 30,
     ) -> None:
-        self.driver               = driver
-        self.excluded_domains     = excluded_domains or []
-        self.generic_domains      = generic_domains  or []
+        self.driver = driver
         self.site_timeout_seconds = site_timeout_seconds
-        # Combined exclusion list reused in every extraction call
-        self._excl_for_validation = list(self.excluded_domains) + list(self.generic_domains)
+        # Merged exclusion list used in every URL-validation call
+        self._excluded = list(excluded_domains or []) + list(generic_domains or [])
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ── Public API ─────────────────────────────────────────────────────────
 
     def search(
         self,
         business_name: str,
-        location:      Optional[str] = None,
-        max_retries:   int = 2,
+        location: Optional[str] = None,
+        max_retries: int = 2,
     ) -> Tuple[Optional[str], bool]:
         """
         Search Google for a business and return the first valid result URL.
 
         Returns:
-            (url, True)  – if a valid URL was found
-            (None, False)– otherwise
+            (url, True)   – a valid URL was found
+            (None, False) – otherwise
         """
         query = f"'{business_name}' '{location}'." if location else f"'{business_name}'"
 
         for attempt in range(max_retries):
             try:
-                logger.info(f"Google search: {query!r}  (attempt {attempt+1}/{max_retries})")
+                logger.info(f"Google search: {query!r}  (attempt {attempt + 1}/{max_retries})")
                 url, ok = self._attempt_search(query)
                 if ok:
                     return url, True
-
             except Exception as exc:
-                logger.error(f"Search error (attempt {attempt+1}/{max_retries}): {exc}")
+                logger.error(f"Search error (attempt {attempt + 1}/{max_retries}): {exc}")
                 if attempt < max_retries - 1:
                     self._maybe_restart_driver(exc)
                     time.sleep(2)
-                    continue
-                logger.error(f"Max retries ({max_retries}) reached")
 
+        logger.error(f"Max retries ({max_retries}) reached for query: {query!r}")
         return None, False
 
-    # ── Private: search flow ──────────────────────────────────────────────────
+    # ── Private: search flow ───────────────────────────────────────────────
 
     def _attempt_search(self, query: str) -> Tuple[Optional[str], bool]:
-        """Single attempt: navigate → type → submit → parse results."""
-        self.driver.get("https://www.google.com", timeout_seconds=self.site_timeout_seconds)
-        self.driver.sleep(random.uniform(1.0, 1.5))
+        """
+        Single attempt: navigate to Google → inject stealth scripts →
+        type query with human-like delays → handle CAPTCHA → parse SERP.
+        """
+        if not self.driver.tab:
+            raise RuntimeError("Driver tab not initialized. Call setup() first.")
+
+        self.driver.run(
+            self.driver.tab.get("https://www.google.com"),
+            timeout_seconds=self.site_timeout_seconds,
+        )
+
+        # Inject canvas-noise + WebGL-spoof before Google's fingerprinting fires
+        self.driver.inject_stealth_scripts()
+
+        self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
 
         if not self._type_query(query):
-            logger.debug("Typing failed – falling back to direct URL")
-            self.driver.get(
-                f"https://www.google.com/search?q={quote_plus(query)}",
+            logger.debug("Typing failed – falling back to direct URL navigation")
+            self.driver.run(
+                self.driver.tab.get(f"https://www.google.com/search?q={quote_plus(query)}"),
                 timeout_seconds=self.site_timeout_seconds,
             )
 
         self._accept_cookies()
-        self.driver.sleep(random.uniform(2.0, 2.8))   # wait for SERP
 
-        html = self.driver.get_content(timeout_seconds=self.site_timeout_seconds)
-        candidates = self._extract_result_urls(html)
+        # Wait for the SERP to render
+        self.driver.run(self.driver.tab.sleep(random.uniform(2.0, 2.8)))
 
-        if not candidates:
-            logger.warning("No valid Google results found")
+        # Check for CAPTCHA / unusual-traffic interstitial before reading results
+        if self._google_captcha_detected():
+            logger.warning("⚠️ Google CAPTCHA detected — search aborted for this attempt")
             return None, False
 
-        for idx, url in enumerate(candidates, 1):
-            logger.info(f"✓ Result #{idx}: {url}")
+        html = str(
+            self.driver.run(
+                self.driver.tab.get_content(),
+                timeout_seconds=self.site_timeout_seconds,
+            )
+            or ""
+        )
+
+        url = self._extract_first_result(html)
+        if url:
+            logger.info(f"✓ Result: {url}")
             return url, True
 
+        logger.warning("No valid Google results found")
         return None, False
 
-    # ── Private: typing ───────────────────────────────────────────────────────
+    # ── Private: CAPTCHA detection ─────────────────────────────────────────
+
+    def _google_captcha_detected(self) -> bool:
+        """
+        Return True if the current page looks like a Google CAPTCHA or
+        unusual-traffic interstitial.
+
+        Checks the live page text via nodriver's find() so it works even
+        when the interstitial is injected dynamically after page load.
+        """
+        if not self.driver.tab:
+            return False
+        for phrase in _GOOGLE_CAPTCHA_PHRASES:
+            try:
+                match = self.driver.run(
+                    self.driver.tab.find(phrase, best_match=True, timeout=1)
+                )
+                if match:
+                    logger.warning(f"CAPTCHA phrase found: {phrase!r}")
+                    return True
+            except Exception:
+                pass
+        return False
+
+    # ── Private: typing ────────────────────────────────────────────────────
 
     def _type_query(self, query: str) -> bool:
         """
-        Fill Google's search field character-by-character using nodriver element APIs,
-        then click the Google Search button.
+        Fill the search field character-by-character with randomised delays
+        (occasional longer pauses every ~12 chars to mimic reading/thinking),
+        then click the Search button.
         """
-        if not query:
+        if not query or not self.driver.tab:
             return False
         try:
-            search_field = self.driver.select(_SEARCH_FIELD_SELECTOR, timeout=3)
-            if not search_field:
+            field = self.driver.run(self.driver.tab.select(_SEARCH_FIELD_SELECTOR, timeout=3))
+            if not field:
                 return False
 
-            self.driver.sleep(random.uniform(0.2, 0.5))
+            self.driver.run(self.driver.tab.sleep(random.uniform(0.2, 0.5)))
 
             for char in query:
-                self.driver.send_keys(search_field, char)
+                self.driver.run(field.send_keys(char))
                 delay = random.uniform(0.04, 0.18)
+                # Occasional longer pause (simulates hesitation / thinking)
                 if random.random() < 0.08:
                     delay += random.uniform(0.25, 0.60)
-                self.driver.sleep(delay)
+                self.driver.run(self.driver.tab.sleep(delay))
 
-            self.driver.sleep(random.uniform(0.4, 1.0))   # pre-submit review pause
-            
-            # Click the Google Search button
-            search_button = self.driver.select('input[name="btnK"]', timeout=2)
-            if not search_button:
-                logger.debug("Search button not found")
+            # Brief review pause before submitting — humans don't type and
+            # instantly hit Enter
+            self.driver.run(self.driver.tab.sleep(random.uniform(0.4, 1.0)))
+
+            button = self.driver.run(self.driver.tab.select('input[name="btnK"]', timeout=2))
+            if not button:
                 return False
-            
-            self.driver.click(search_button)
-            logger.debug("✓ Clicked Google Search button")
+
+            # Hover over the button before clicking (native input pipeline)
+            self.driver.run(button.mouse_move())
+            self.driver.run(self.driver.tab.sleep(random.uniform(0.1, 0.3)))
+            self.driver.run(button.mouse_click())
             return True
 
         except Exception as exc:
             logger.debug(f"Typing failed: {exc}")
             return False
 
-    # ── Private: cookie banner ────────────────────────────────────────────────
+    # ── Private: cookie banner ─────────────────────────────────────────────
 
     def _accept_cookies(self) -> None:
+        """Dismiss Google's cookie/consent banner with a hover → click."""
+        if not self.driver.tab:
+            return
         try:
-            cookie_button = self.driver.find("accept all", best_match=True, timeout=2)
-            if not cookie_button:
-                cookie_button = self.driver.find("accept", best_match=True, timeout=2)
-            if cookie_button:
-                self.driver.click(cookie_button)
+            btn = self.driver.run(
+                self.driver.tab.find("accept all", best_match=True, timeout=2)
+            ) or self.driver.run(
+                self.driver.tab.find("accept", best_match=True, timeout=2)
+            )
+            if btn:
+                self.driver.run(btn.mouse_move())
+                self.driver.run(self.driver.tab.sleep(random.uniform(0.1, 0.3)))
+                self.driver.run(btn.mouse_click())
                 logger.info("✓ Accepted Google cookies")
-                self.driver.sleep(0.8)
+                self.driver.run(self.driver.tab.sleep(0.8))
         except Exception as exc:
             logger.debug(f"Cookie banner: {exc}")
 
-    # ── Private: result extraction ────────────────────────────────────────────
+    # ── Private: result extraction ─────────────────────────────────────────
 
-    def _extract_result_urls(self, html: str) -> List[str]:
+    def _extract_first_result(self, html: str) -> Optional[str]:
         """
-        Parse SERP HTML and return validated external URLs.
-        Priority: local-panel Website  →  organic .A6K0A containers.
+        Parse SERP HTML and return the first validated external URL.
+
+        Priority:
+          1. Local knowledge-panel "Website" action
+          2. First organic result in .A6K0A containers
         """
         soup = BeautifulSoup(html or "", "html.parser")
 
         # 1) Local knowledge panel
-        local_panel = soup.select_one("div.zhZ3gf")
-        if local_panel:
-            actions = self._extract_local_actions(local_panel)
-            logger.debug(f"Local panel actions: {sorted(actions)}")
+        panel = soup.select_one("div.zhZ3gf")
+        if panel:
+            actions = self._extract_local_actions(panel)
             website = actions.get("website", "")
-            if website:
-                if validate_website_http(website, excluded_domains=self._excl_for_validation):
-                    logger.info(f"Local panel website: {website}")
-                    return [website]
-                logger.debug(f"Local panel website failed validation: {website}")
+            if website and self._url_ok(website):
+                logger.info(f"Local panel website: {website}")
+                return website
+            logger.debug(f"Local panel website failed validation: {website!r}")
         else:
-            logger.debug("No local panel (div.zhZ3gf)")
+            logger.debug("No local panel found (div.zhZ3gf)")
 
         # 2) Organic results
         for container in soup.select(".A6K0A"):
             anchor = container.select_one('a[jsname="UWckNb"]')
             if not anchor:
                 continue
-            candidate = self._normalize_href(anchor.get("href", "").strip())
-            if candidate and validate_website_http(
-                candidate, excluded_domains=self._excl_for_validation
-            ):
-                return [candidate]
+            candidate = self._resolve_href(anchor.get("href", "").strip())
+            if candidate and self._url_ok(candidate):
+                return candidate
 
-        return []
+        return None
 
     def _extract_local_actions(self, root) -> Dict[str, str]:
-        """Extract action → URL/value pairs from the local knowledge panel."""
+        """Return a mapping of action-key → URL/value from the local panel."""
         actions: Dict[str, str] = {}
-
         for block in root.select("div.bkaPDb"):
-            label_node = block.select_one("span.aSAiSd")
-            raw_label  = label_node.get_text(" ", strip=True) if label_node else ""
-            key        = self._map_action_label(raw_label)
+            label_el = block.select_one("span.aSAiSd")
+            key = self._normalize_label(label_el.get_text(" ", strip=True) if label_el else "")
             if not key:
                 continue
 
             if key == "call":
                 phone_el = block.select_one("[data-phone-number]")
-                phone    = (phone_el.get("data-phone-number") or "").strip() if phone_el else ""
-                if phone:
-                    actions[key] = phone
+                if phone_el:
+                    phone = (phone_el.get("data-phone-number") or "").strip()
+                    if phone:
+                        actions[key] = phone
                 continue
 
             link = block.select_one("a[href]")
@@ -222,9 +286,9 @@ class GoogleSearcher:
                 continue
 
             if key == "website":
-                candidate = self._normalize_href(href)
-                if candidate:
-                    actions[key] = candidate
+                resolved = self._resolve_href(href)
+                if resolved:
+                    actions[key] = resolved
             elif href.startswith(("http://", "https://")):
                 actions[key] = href
             elif href.startswith("/"):
@@ -232,18 +296,18 @@ class GoogleSearcher:
 
         return actions
 
-    # ── Private: label / href normalization ───────────────────────────────────
-
-    def _map_action_label(self, raw: str) -> str:
-        """Normalize a panel action label (locale-agnostic) to an internal key."""
-        normalized = unicodedata.normalize("NFKD", raw.strip().lower())
-        stripped   = "".join(c for c in normalized if not unicodedata.combining(c))
-        clean      = " ".join(stripped.split())
-        return _LOCAL_ACTION_MAP.get(clean, "")
+    # ── Private: label / href helpers ─────────────────────────────────────
 
     @staticmethod
-    def _normalize_href(href: str) -> str:
-        """Resolve various Google SERP href formats to a plain target URL."""
+    def _normalize_label(raw: str) -> str:
+        """Map a panel action label (locale-agnostic) to an internal key."""
+        normalized = unicodedata.normalize("NFKD", raw.strip().lower())
+        stripped = "".join(c for c in normalized if not unicodedata.combining(c))
+        return _LOCAL_ACTION_MAP.get(" ".join(stripped.split()), "")
+
+    @staticmethod
+    def _resolve_href(href: str) -> str:
+        """Resolve Google SERP href formats to a plain target URL."""
         if not href:
             return ""
         if href.startswith("//"):
@@ -257,10 +321,12 @@ class GoogleSearcher:
             return href.strip()
         return ""
 
+    def _url_ok(self, url: str) -> bool:
+        return validate_website_http(url, excluded_domains=self._excluded)
+
     def _maybe_restart_driver(self, exc: Exception) -> None:
-        """Restart the nodriver instance on timeout errors."""
         if "timeout" in str(exc).lower() or "timed out" in str(exc).lower():
-            logger.warning("⚠️ Timeout – restarting driver …")
+            logger.warning("⚠️ Timeout detected – restarting driver...")
             try:
                 self.driver.restart(reason="health")
                 logger.info("✅ Driver restarted")

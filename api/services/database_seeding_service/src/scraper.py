@@ -19,7 +19,10 @@ from .utils.website_validator import WebsiteEmailValidator
 logger = get_logger(__name__)
 
 SITE_TIMEOUT_SECONDS = 30
-PERIODIC_BROWSER_RESTART_BATCHES = 10
+
+# Full browser restart is a last resort — it destroys the warm session.
+# Stray-tab cleanup runs every batch instead (see _close_stray_tabs).
+PERIODIC_BROWSER_RESTART_BATCHES = 100
 
 
 def _format_reference_preview(values: set[str], limit: int = 5) -> str:
@@ -78,6 +81,33 @@ def _is_domain_already_processed(domain: str) -> bool:
     return contact_repository.get_contact_by_domain(domain) is not None
 
 
+def _merge_row_stats(stats: Dict[str, Any], row_stats: Dict[str, bool]) -> None:
+    """
+    Merge the two row-level flags we track into the global stats counters.
+    All other enrichment flags have been removed as they served no reporting purpose.
+    """
+    if row_stats.get("contact_form_found"):
+        stats["contact_form_discoveries"] += 1
+    if row_stats.get("synthetic_email_used"):
+        stats["synthetic_emails_created"] += 1
+
+
+def _close_stray_tabs(validator: "WebsiteEmailValidator") -> None:
+    """
+    Close any tabs that were opened automatically during scraping
+    (Facebook/Spotify ads, Google login popups, etc.) without restarting
+    the browser, so the warm session is preserved.
+
+    This runs after every batch instead of a full restart every N batches.
+    The primary tab is kept alive; everything else is closed.
+    """
+    try:
+        validator.prepare_next_batch()
+        logger.debug("Stray tabs closed, primary tab reset to about:blank")
+    except Exception as exc:
+        logger.debug(f"Stray tab cleanup failed (non-fatal): {exc}")
+
+
 def _build_company_contact_tuple(
     company_name: str,
     company_url: str,
@@ -105,11 +135,9 @@ def _build_company_contact_tuple(
         value = data_transformers.get_mapped_value(row, csv_mapping.get(field))
         if value is not None and str(value).strip() != "":
             return value
-
         default_value = default_values.get(field)
         if default_value is not None and str(default_value).strip() != "":
             return default_value
-
         return fallback
 
     selected_email = ""
@@ -208,10 +236,6 @@ def process_database_seeding(
         "rows_skipped_invalid_mx": 0,
         "rows_skipped_no_email_found": 0,
         "errors": [],
-        "google_search_attempts": 0,
-        "google_search_successes": 0,
-        "website_scraping_attempts": 0,
-        "website_scraping_successes": 0,
         "contact_form_discoveries": 0,
         "synthetic_emails_created": 0,
     }
@@ -275,9 +299,6 @@ def process_database_seeding(
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
     new_mx_records: List[Tuple[str, str, str]] = []
     batches_processed = 0
-    last_boundary_restart_epoch = 0
-    if validator:
-        last_boundary_restart_epoch = validator.restart_epoch()
     start_time = time.time()
 
     try:
@@ -317,21 +338,8 @@ def process_database_seeding(
                     new_mx_records=new_mx_records,
                     validator=validator,
                 )
-                
-                # Update stats with row-level stats
-                if row_stats:
-                    if row_stats.get("google_search_attempt"):
-                        stats["google_search_attempts"] += 1
-                    if row_stats.get("google_search_success"):
-                        stats["google_search_successes"] += 1
-                    if row_stats.get("website_scraping_attempt"):
-                        stats["website_scraping_attempts"] += 1
-                    if row_stats.get("website_scraping_success"):
-                        stats["website_scraping_successes"] += 1
-                    if row_stats.get("contact_form_found"):
-                        stats["contact_form_discoveries"] += 1
-                    if row_stats.get("synthetic_email_used"):
-                        stats["synthetic_emails_created"] += 1
+
+                _merge_row_stats(stats, row_stats)
 
                 if extra_contacts:
                     contact_batch.extend(extra_contacts)
@@ -383,31 +391,25 @@ def process_database_seeding(
                         )
 
                     batches_processed += 1
+
                     if validator:
-                        try:
-                            logger.debug(f"Batch reset starting for batch {batches_processed}")
-                            validator.prepare_next_batch()
-                            logger.debug(f"Batch tab cleanup completed for batch {batches_processed}")
-                        except Exception as exc:
-                            logger.debug(f"Batch tab cleanup failed: {exc}")
+                        # Always close stray tabs (ads, popups, login windows) after
+                        # every batch — this keeps the primary tab and session intact.
+                        _close_stray_tabs(validator)
 
+                        # Full restart only as a last resort (session recovery after
+                        # a crash or browser freeze). Skipped entirely when attached
+                        # to a real Chrome profile to protect the warm session.
+                        is_attached = bool(getattr(validator.driver, "_attach_port", None))
                         periodic_due = batches_processed % PERIODIC_BROWSER_RESTART_BATCHES == 0
-                        if periodic_due:
-                            if validator.had_health_restart_since(last_boundary_restart_epoch):
+                        if periodic_due and not is_attached:
+                            try:
+                                validator.restart_browser(reason="periodic")
                                 logger.debug(
-                                    "Skipping periodic browser restart on this boundary "
-                                    "because a health restart already occurred"
+                                    f"Periodic browser restart completed at batch {batches_processed}"
                                 )
-                            else:
-                                try:
-                                    validator.restart_browser(reason="periodic")
-                                    logger.debug(
-                                        f"Periodic browser restart completed at batch {batches_processed}"
-                                    )
-                                except Exception as exc:
-                                    logger.debug(f"Periodic browser restart failed: {exc}")
-
-                        last_boundary_restart_epoch = validator.restart_epoch()
+                            except Exception as exc:
+                                logger.debug(f"Periodic browser restart failed: {exc}")
 
                     try:
                         (
@@ -492,7 +494,6 @@ def process_database_seeding(
             )
 
     flush_buffered_log_handlers(logger)
-
     return stats
 
 
@@ -520,10 +521,6 @@ def process_single_url_seeding(
         "rows_skipped_invalid_mx": 0,
         "rows_skipped_no_email_found": 0,
         "errors": [],
-        "google_search_attempts": 0,
-        "google_search_successes": 0,
-        "website_scraping_attempts": 0,
-        "website_scraping_successes": 0,
         "contact_form_discoveries": 0,
         "synthetic_emails_created": 0,
         "url_result": None,
@@ -556,9 +553,7 @@ def process_single_url_seeding(
                 not_visiting_domains=not_visiting_domains,
             )
 
-        row = {
-            "url": (url or "").strip(),
-        }
+        row = {"url": (url or "").strip()}
         contact_data, row_stats, extra_contacts = _process_contact_row(
             row=row,
             generic_domains=generic_domains,
@@ -573,18 +568,7 @@ def process_single_url_seeding(
             validator=validator,
         )
 
-        if row_stats.get("google_search_attempt"):
-            stats["google_search_attempts"] += 1
-        if row_stats.get("google_search_success"):
-            stats["google_search_successes"] += 1
-        if row_stats.get("website_scraping_attempt"):
-            stats["website_scraping_attempts"] += 1
-        if row_stats.get("website_scraping_success"):
-            stats["website_scraping_successes"] += 1
-        if row_stats.get("contact_form_found"):
-            stats["contact_form_discoveries"] += 1
-        if row_stats.get("synthetic_email_used"):
-            stats["synthetic_emails_created"] += 1
+        _merge_row_stats(stats, row_stats)
 
         if contact_data is None:
             stats["skipped"] = 1
@@ -608,6 +592,7 @@ def process_single_url_seeding(
             "status": "updated" if updated else "inserted",
         }
         return stats
+
     except Exception as exc:
         logger.error(f"Single URL processing failed: {exc}")
         stats["errors"].append(str(exc))
@@ -619,7 +604,6 @@ def process_single_url_seeding(
                 validator.quit()
             except Exception:
                 pass
-
         elapsed = time.time() - start_time
         logger.info(
             "SEED_SINGLE_URL_END "
@@ -645,23 +629,10 @@ def _process_contact_row(
     validator: Optional[WebsiteEmailValidator] = None,
 ) -> Tuple[Optional[Tuple], Dict[str, bool], List[Tuple]]:
     """
-    Process one row and return DB tuple, or None when row should be skipped.
-    Also returns row-level statistics for tracking enrichment activities.
-
-    Rules:
-    - At least one of fullname/fname/lname/name/email must be present in input row.
-    - If email missing, attempt website/google enrichment.
-    - Row must end with a valid email and valid MX to be stored.
-    - Country is auto-filled from email ccTLD when missing.
-    
-    Returns:
-        Tuple of (contact_data or None, row_stats dict)
+    Process one row and return a DB tuple (or None to skip), row-level stats,
+    and any extra contact tuples discovered during company prefetch.
     """
     row_stats: Dict[str, bool] = {
-        "google_search_attempt": False,
-        "google_search_success": False,
-        "website_scraping_attempt": False,
-        "website_scraping_success": False,
         "contact_form_found": False,
         "synthetic_email_used": False,
     }
@@ -671,28 +642,17 @@ def _process_contact_row(
         value = data_transformers.get_mapped_value(row, csv_mapping.get(field))
         if value is not None and str(value).strip() != "":
             return value
-
         default_value = default_values.get(field)
         if default_value is not None and str(default_value).strip() != "":
             return default_value
-
         return fallback
 
     csv_fullname_raw = str(_mapped_or_default("fullname", "") or "").strip()
-    csv_fname = data_transformers.format_fname(
-        _mapped_or_default("fname", "")
-    )
-    csv_lname = data_transformers.format_lname(
-        _mapped_or_default("lname", "")
-    )
-    csv_fullname = csv_fullname_raw or " ".join(
-        part for part in [csv_lname, csv_fname] if part
-    )
-
+    csv_fname = data_transformers.format_fname(_mapped_or_default("fname", ""))
+    csv_lname = data_transformers.format_lname(_mapped_or_default("lname", ""))
+    csv_fullname = csv_fullname_raw or " ".join(part for part in [csv_lname, csv_fname] if part)
     csv_company_name = str(_mapped_or_default("name", "") or "").strip()
-
     csv_email = str(_mapped_or_default("email", "") or "").strip().lower()
-
     row_input_website = str(_mapped_or_default("url", "") or "").strip()
     row_has_website_input = bool(row_input_website)
 
@@ -704,7 +664,6 @@ def _process_contact_row(
     enriched_website = row_input_website
     contact_form_url = None
 
-    # Start with mapped values, then fill missing values from discovered website when allowed.
     phone = _mapped_or_default("phone", None)
     mobile = _mapped_or_default("mobile", None)
     fax = _mapped_or_default("fax", None)
@@ -721,7 +680,6 @@ def _process_contact_row(
                 or _mapped_or_default("position", "")
                 or ""
             )
-            # Keep full email (not just domain) when using email as Google search seed.
             search_seed = csv_company_name or csv_fullname or csv_email
 
             if enriched_website and not validator.validate_website(enriched_website):
@@ -787,7 +745,11 @@ def _process_contact_row(
                         except Exception as exc:
                             logger.warning(f"Company prefetch scraping error: {exc}")
 
-            needs_person_search = can_search and bool(csv_company_name) and bool(csv_fullname or (csv_fname and csv_lname))
+            needs_person_search = (
+                can_search
+                and bool(csv_company_name)
+                and bool(csv_fullname or (csv_fname and csv_lname))
+            )
             if needs_person_search and (not enriched_email) and (not enriched_website):
                 person_seed = f"{csv_fullname or f'{csv_fname} {csv_lname}'.strip()} {csv_company_name}".strip()
                 if person_seed:
@@ -811,9 +773,7 @@ def _process_contact_row(
                         else:
                             logger.info(f"Person search SUCCESS: found website '{person_result}'")
 
-            # Google search is ONLY for rows where client did not provide website input.
             if (not row_has_website_input) and (not enriched_website) and (not validator.skip_website_search) and search_seed:
-                row_stats["google_search_attempt"] = True
                 logger.info(f"Google search attempt: seed='{search_seed}', location='{location}'")
                 google_result, _ = validator.google_search_business(search_seed, location=location)
                 if google_result and validator.validate_website(google_result):
@@ -826,7 +786,6 @@ def _process_contact_row(
                         f"already_processed={already_processed_google_domain}"
                     )
                     enriched_website = google_result
-                    row_stats["google_search_success"] = True
                     if already_processed_google_domain:
                         logger.info(
                             "Google search matched an already processed domain; "
@@ -844,12 +803,9 @@ def _process_contact_row(
                 logger.debug(f"Website reuse lookup domain: '{website_domain or 'n/a'}'")
                 existing_contact = contact_repository.get_contact_by_domain(enriched_website)
                 domain_already_processed = existing_contact is not None
-                
+
                 if existing_contact:
-                    logger.info(
-                        "Website domain already exists in DB; reusing all stored contact fields"
-                    )
-                    # ✅ Reuse ALL available fields from existing contact (not just missing ones)
+                    logger.info("Website domain already exists in DB; reusing all stored contact fields")
                     if existing_contact[0]:
                         enriched_email = str(existing_contact[0]).strip().lower()
                     if existing_contact[6]:
@@ -865,14 +821,8 @@ def _process_contact_row(
                     if existing_contact[13]:
                         geo_country = str(existing_contact[13]).strip()
 
-                # ✅ OPTIMIZATION: Only scrape if domain NOT already processed OR
-                # domain processed but critical fields (email/phone) are still missing from DB
-
-
                 if not domain_already_processed:
-                    row_stats["website_scraping_attempt"] = True
                     logger.info("Website scraping attempt: looking for email and phone")
-                    logger.info(f"Website scraping handoff start website='{enriched_website}'")
                     (
                         found_emails,
                         found_phones,
@@ -882,9 +832,9 @@ def _process_contact_row(
                         found_country,
                     ) = validator.find_contact_info_on_website(enriched_website)
                     logger.info(
-                        "Website scraping handoff done "
+                        "Website scraping done "
                         f"website='{enriched_website}' emails={len(found_emails)} phones={len(found_phones)} "
-                        f"contact_page={found_contact_page!r} location={found_location!r} city={found_city!r} country={found_country!r}"
+                        f"contact_page={found_contact_page!r} city={found_city!r} country={found_country!r}"
                     )
 
                     geo_location = found_location or geo_location
@@ -896,65 +846,40 @@ def _process_contact_row(
                         row_stats["contact_form_found"] = True
                         logger.info(f"Contact form found: '{found_contact_page}'")
 
-                    email_found = False
                     if not enriched_email:
                         filtered = validator.filter_emails(found_emails or [])
                         if filtered:
                             enriched_email = filtered[0].strip().lower()
-                            email_found = True
-                            logger.info(f"Website scraping SUCCESS: found email '{enriched_email}'")
+                            logger.info(f"Email found on website: '{enriched_email}'")
 
-                    phone_found = False
-                    if not phone:
-                        if found_phones:
-                            phone = (found_phones[0] or "").strip() or None
-                            if phone:
-                                phone_found = True
-                                logger.info(f"Website scraping SUCCESS: found phone '{phone}'")
-
-                    if email_found or phone_found:
-                        row_stats["website_scraping_success"] = True
-                    else:
-                        logger.info("Website scraping failed: no valid email or phone found on website")
-                elif domain_already_processed:
+                    if not phone and found_phones:
+                        phone = (found_phones[0] or "").strip() or None
+                        if phone:
+                            logger.info(f"Phone found on website: '{phone}'")
+                else:
                     logger.info("Domain already processed; skipping redundant web scraping")
 
         except Exception as exc:
             logger.warning(f"Web enrichment error: {exc}")
 
     if not enriched_email or "@" not in enriched_email:
-        fallback_domain = _extract_domain_from_website(enriched_website)
-        if not fallback_domain:
-            fallback_domain = "nodomaine.com"
-        should_rewrite = bool(
-            fallback_domain
-            and (csv_fullname or (csv_fname and csv_lname))
-        )
+        fallback_domain = _extract_domain_from_website(enriched_website) or "nodomaine.com"
         rewritten = None
-        if should_rewrite:
+        if fallback_domain and (csv_fullname or (csv_fname and csv_lname)):
             rewritten = _prefer_named_synthetic_email(
                 domain=fallback_domain,
                 fname=csv_fname,
                 lname=csv_lname,
                 fullname=csv_fullname,
             )
-
-        if rewritten:
-            enriched_email = rewritten
-            logger.info(f"Synthetic fallback email rewritten from postmaster pattern to '{enriched_email}'")
-        else:
-            synthetic_user_id = uuid.uuid4().hex
-            enriched_email = f"postmaster+{synthetic_user_id}@{fallback_domain}"
+        enriched_email = rewritten or f"postmaster+{uuid.uuid4().hex}@{fallback_domain}"
         row_stats["synthetic_email_used"] = True
-        logger.info(
-            "Synthetic fallback email generated: "
-            f"'{enriched_email}' (website_domain={'yes' if fallback_domain != 'nodomaine.com' else 'no'})"
-        )
+        logger.info(f"Synthetic fallback email: '{enriched_email}'")
 
     _, domain = enriched_email.split("@", 1)
     domain = domain.strip().lower()
     if not domain:
-        logger.info("Email domain was empty; normalizing to nodomaine.com to preserve record")
+        logger.info("Email domain empty; normalizing to nodomaine.com")
         local_part = enriched_email.split("@", 1)[0].strip() or f"postmaster+{uuid.uuid4().hex}"
         domain = "nodomaine.com"
         enriched_email = f"{local_part}@{domain}"
@@ -975,13 +900,9 @@ def _process_contact_row(
         try:
             mx_host, mx_root = mx_resolver.resolve_mx_record(domain, mx_cache, new_mx_records)
             if not mx_host:
-                logger.info(
-                    f"No valid MX record for domain '{domain}'; preserving row with discovered email"
-                )
+                logger.info(f"No valid MX record for domain '{domain}'; preserving row anyway")
         except Exception as exc:
-            logger.warning(
-                f"MX resolution error for {domain}: {exc}; preserving row with discovered email"
-            )
+            logger.warning(f"MX resolution error for {domain}: {exc}; preserving row anyway")
 
         if mx_root:
             mx_root_email = f"mx@{mx_root}"
@@ -1012,7 +933,6 @@ def _process_contact_row(
     country = str(_mapped_or_default("country", "") or "")
     if not country:
         country = (geo_country or "").strip()
-
     if not country:
         try:
             from_tld = get_country_from_email_domain(enriched_email)
@@ -1069,8 +989,7 @@ def _extract_domain_from_website(website: Optional[str]) -> str:
     if not host:
         return ""
 
-    host = host.split("/", 1)[0]
-    host = host.split(":", 1)[0]
+    host = host.split("/", 1)[0].split(":", 1)[0]
     if host.startswith("www."):
         host = host[4:]
 
@@ -1108,8 +1027,6 @@ def _insert_batch(
                 logger.info(
                     f"Batch: {inserted} inserted, {updated} updated | "
                     f"Progress: {processed} / {total_rows} | "
-                    f"Email status: Inserted={inserted}, Updated={updated} | "
-                    f"Totals: Inserted={stats['inserted']}, Updated={stats['updated']} | "
                     f"ETA: {data_transformers.format_eta(eta_seconds)}"
                 )
             except Exception as exc:
@@ -1120,11 +1037,7 @@ def _insert_batch(
 
 
 def _load_reference_data(log_prefix: str = "Loaded") -> tuple[
-    set[str],
-    set[str],
-    set[str],
-    set[str],
-    set[str],
+    set[str], set[str], set[str], set[str], set[str],
 ]:
     """Fetch all classifier reference sets from DB in one call site."""
     generic_domains = set(contact_repository.get_all_generic_domains())
@@ -1137,23 +1050,9 @@ def _load_reference_data(log_prefix: str = "Loaded") -> tuple[
         f"{log_prefix}: "
         f"{len(generic_domains)} generic domains, "
         f"{len(generic_users)} generic users, "
-        f"{len(generic_mx)} generic MX records, "
+        f"{len(generic_mx)} generic MX, "
         f"{len(site_builder_domains)} site builder domains, "
         f"{len(not_visiting_domains)} not-visiting domains"
     )
-    logger.debug(
-        f"{log_prefix} values: "
-        f"generic_domains={_format_reference_preview(generic_domains)}, "
-        f"generic_users={_format_reference_preview(generic_users)}, "
-        f"generic_mx={_format_reference_preview(generic_mx)}, "
-        f"site_builder_domains={_format_reference_preview(site_builder_domains)}, "
-        f"not_visiting_domains={_format_reference_preview(not_visiting_domains)}"
-    )
 
-    return (
-        generic_domains,
-        generic_users,
-        generic_mx,
-        site_builder_domains,
-        not_visiting_domains,
-    )
+    return generic_domains, generic_users, generic_mx, site_builder_domains, not_visiting_domains
