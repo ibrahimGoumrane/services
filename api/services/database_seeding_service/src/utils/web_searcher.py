@@ -87,31 +87,6 @@ class GoogleSearcher:
         logger.error(f"Max retries ({max_retries}) reached for query: {query!r}")
         return None, False
 
-    def search_linkedin_profile(
-        self,
-        person_name: str,
-    ) -> Tuple[Optional[str], bool]:
-        """
-        Search Google for a LinkedIn profile and return the first LinkedIn URL.
-        Single straightforward attempt without retries.
-        """
-        person_name = (person_name or "").strip()
-        if not person_name:
-            logger.info("No person name provided for LinkedIn search")
-            return None, False
-
-        query = f'"{person_name}" linkedin site:linkedin.com'
-        try:
-            logger.info(f"Google LinkedIn search: {query!r}")
-            url, ok = self._attempt_search(query, required_domain="linkedin.com")
-            if ok:
-                return url, True
-            logger.info("No LinkedIn result found")
-            return None, False
-        except Exception as exc:
-            logger.error(f"LinkedIn search error: {exc}")
-            return None, False
-
     # ── Private: search flow ───────────────────────────────────────────────
 
     def _attempt_search(self, query: str, required_domain: Optional[str] = None) -> Tuple[Optional[str], bool]:

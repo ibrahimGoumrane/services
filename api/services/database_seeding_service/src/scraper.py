@@ -75,6 +75,26 @@ def _prefer_named_synthetic_email(
     return None
 
 
+def _is_linkedin_url(url: Optional[str]) -> bool:
+    if not url:
+        return False
+
+    raw = str(url).strip()
+    if not raw:
+        return False
+
+    candidate = raw if "://" in raw else f"https://{raw}"
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return "linkedin.com" in raw.lower()
+
+    host = (parsed.netloc or "").lower().strip()
+    if host.startswith("www."):
+        host = host[4:]
+    return host == "linkedin.com" or host.endswith(".linkedin.com")
+
+
 def _is_domain_already_processed(domain: str) -> bool:
     if not domain:
         return False
@@ -668,6 +688,14 @@ def _process_contact_row(
     mobile = _mapped_or_default("mobile", None)
     fax = _mapped_or_default("fax", None)
     linkedin_profile = str(_mapped_or_default("linkedin", "") or "").strip() or None
+
+    if _is_linkedin_url(row_input_website):
+        linkedin_profile = linkedin_profile or row_input_website
+        logger.info(
+            "Input URL is a LinkedIn URL; storing it in linkedin field and skipping website scraping"
+        )
+        row_input_website = ""
+        row_has_website_input = False
     geo_location: Optional[str] = None
     geo_city: Optional[str] = None
     geo_country: Optional[str] = None
@@ -771,17 +799,6 @@ def _process_contact_row(
                         else:
                             logger.info(f"Person search SUCCESS: found website '{person_result}'")
 
-            if can_search and not linkedin_profile and person_name:
-                logger.info(f"LinkedIn search attempt: person='{person_name}'")
-                linkedin_result, _ = validator.search_linkedin_profile(
-                    person_name=person_name,
-                )
-                if linkedin_result:
-                    linkedin_profile = linkedin_result
-                    logger.info(f"LinkedIn profile found: '{linkedin_profile}'")
-                else:
-                    logger.info("LinkedIn search failed: no valid LinkedIn URL found")
-
             if (not row_has_website_input) and (not enriched_website) and (not validator.skip_website_search) and search_seed:
                 logger.info(f"Google search attempt: seed='{search_seed}', location='{location}'")
                 google_result, _ = validator.google_search_business(search_seed, location=location)
@@ -804,6 +821,13 @@ def _process_contact_row(
                         logger.info(f"Google search SUCCESS: found website '{google_result}'")
                 else:
                     logger.info("Google search failed: no valid website found")
+
+            if enriched_website and _is_linkedin_url(enriched_website):
+                linkedin_profile = linkedin_profile or enriched_website
+                logger.info(
+                    "Enriched website resolved to LinkedIn URL; storing in linkedin field and skipping website scraping"
+                )
+                enriched_website = ""
 
             if enriched_website:
                 logger.info(f"Website enrichment on: '{enriched_website}'")
