@@ -667,6 +667,7 @@ def _process_contact_row(
     phone = _mapped_or_default("phone", None)
     mobile = _mapped_or_default("mobile", None)
     fax = _mapped_or_default("fax", None)
+    linkedin_profile = str(_mapped_or_default("linkedin", "") or "").strip() or None
     geo_location: Optional[str] = None
     geo_city: Optional[str] = None
     geo_country: Optional[str] = None
@@ -680,7 +681,8 @@ def _process_contact_row(
                 or _mapped_or_default("position", "")
                 or ""
             )
-            search_seed = csv_company_name or csv_fullname or csv_email
+            person_name = csv_fullname or " ".join(part for part in [csv_fname, csv_lname] if part)
+            search_seed = csv_company_name or person_name or csv_email
 
             if enriched_website and not validator.validate_website(enriched_website):
                 logger.info(f"Website rejected by validator: {enriched_website}")
@@ -745,13 +747,9 @@ def _process_contact_row(
                         except Exception as exc:
                             logger.warning(f"Company prefetch scraping error: {exc}")
 
-            needs_person_search = (
-                can_search
-                and bool(csv_company_name)
-                and bool(csv_fullname or (csv_fname and csv_lname))
-            )
+            needs_person_search = bool(can_search and person_name and csv_company_name)
             if needs_person_search and (not enriched_email) and (not enriched_website):
-                person_seed = f"{csv_fullname or f'{csv_fname} {csv_lname}'.strip()} {csv_company_name}".strip()
+                person_seed = f"{person_name} {csv_company_name}".strip()
                 if person_seed:
                     logger.info(f"Person search attempt: seed='{person_seed}'")
                     person_result, _ = validator.google_search_business(person_seed, location=None)
@@ -772,6 +770,17 @@ def _process_contact_row(
                             )
                         else:
                             logger.info(f"Person search SUCCESS: found website '{person_result}'")
+
+            if can_search and not linkedin_profile and person_name:
+                logger.info(f"LinkedIn search attempt: person='{person_name}'")
+                linkedin_result, _ = validator.search_linkedin_profile(
+                    person_name=person_name,
+                )
+                if linkedin_result:
+                    linkedin_profile = linkedin_result
+                    logger.info(f"LinkedIn profile found: '{linkedin_profile}'")
+                else:
+                    logger.info("LinkedIn search failed: no valid LinkedIn URL found")
 
             if (not row_has_website_input) and (not enriched_website) and (not validator.skip_website_search) and search_seed:
                 logger.info(f"Google search attempt: seed='{search_seed}', location='{location}'")
@@ -816,6 +825,8 @@ def _process_contact_row(
                         fax = existing_contact[8]
                     if existing_contact[14]:
                         contact_form_url = existing_contact[14]
+                    if existing_contact[15] and not linkedin_profile:
+                        linkedin_profile = str(existing_contact[15]).strip() or linkedin_profile
                     if existing_contact[11]:
                         geo_city = str(existing_contact[11]).strip()
                     if existing_contact[13]:
@@ -962,7 +973,7 @@ def _process_contact_row(
         _mapped_or_default("zip", None),
         country,
         urlcontactform,
-        _mapped_or_default("linkedin", None),
+        linkedin_profile,
         _mapped_or_default("image", None),
         mx_host,
         is_generic_email,

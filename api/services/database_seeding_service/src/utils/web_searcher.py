@@ -87,9 +87,34 @@ class GoogleSearcher:
         logger.error(f"Max retries ({max_retries}) reached for query: {query!r}")
         return None, False
 
+    def search_linkedin_profile(
+        self,
+        person_name: str,
+    ) -> Tuple[Optional[str], bool]:
+        """
+        Search Google for a LinkedIn profile and return the first LinkedIn URL.
+        Single straightforward attempt without retries.
+        """
+        person_name = (person_name or "").strip()
+        if not person_name:
+            logger.info("No person name provided for LinkedIn search")
+            return None, False
+
+        query = f'"{person_name}" linkedin site:linkedin.com'
+        try:
+            logger.info(f"Google LinkedIn search: {query!r}")
+            url, ok = self._attempt_search(query, required_domain="linkedin.com")
+            if ok:
+                return url, True
+            logger.info("No LinkedIn result found")
+            return None, False
+        except Exception as exc:
+            logger.error(f"LinkedIn search error: {exc}")
+            return None, False
+
     # ── Private: search flow ───────────────────────────────────────────────
 
-    def _attempt_search(self, query: str) -> Tuple[Optional[str], bool]:
+    def _attempt_search(self, query: str, required_domain: Optional[str] = None) -> Tuple[Optional[str], bool]:
         """
         Single attempt: navigate to Google → inject stealth scripts →
         type query with human-like delays → handle CAPTCHA → parse SERP.
@@ -132,7 +157,7 @@ class GoogleSearcher:
             or ""
         )
 
-        url = self._extract_first_result(html)
+        url = self._extract_first_result(html, required_domain=required_domain)
         if url:
             logger.info(f"✓ Result: {url}")
             return url, True
@@ -230,7 +255,7 @@ class GoogleSearcher:
 
     # ── Private: result extraction ─────────────────────────────────────────
 
-    def _extract_first_result(self, html: str) -> Optional[str]:
+    def _extract_first_result(self, html: str, required_domain: Optional[str] = None) -> Optional[str]:
         """
         Parse SERP HTML and return the first validated external URL.
 
@@ -245,7 +270,7 @@ class GoogleSearcher:
         if panel:
             actions = self._extract_local_actions(panel)
             website = actions.get("website", "")
-            if website and self._url_ok(website):
+            if website and self._url_ok(website, required_domain=required_domain):
                 logger.info(f"Local panel website: {website}")
                 return website
             logger.debug(f"Local panel website failed validation: {website!r}")
@@ -258,7 +283,7 @@ class GoogleSearcher:
             if not anchor:
                 continue
             candidate = self._resolve_href(anchor.get("href", "").strip())
-            if candidate and self._url_ok(candidate):
+            if candidate and self._url_ok(candidate, required_domain=required_domain):
                 return candidate
 
         return None
@@ -321,7 +346,13 @@ class GoogleSearcher:
             return href.strip()
         return ""
 
-    def _url_ok(self, url: str) -> bool:
+    def _url_ok(self, url: str, required_domain: Optional[str] = None) -> bool:
+        if required_domain:
+            host = (urlparse(url).netloc or "").strip().lower()
+            if host.startswith("www."):
+                host = host[4:]
+            if not host.endswith(required_domain):
+                return False
         return validate_website_http(url, excluded_domains=self._excluded)
 
     def _maybe_restart_driver(self, exc: Exception) -> None:

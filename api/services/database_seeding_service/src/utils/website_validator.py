@@ -207,6 +207,17 @@ class WebsiteEmailValidator:
             return None, False
         
         return self.searcher.search(business_name, location, max_retries)
+
+    def search_linkedin_profile(
+        self,
+        person_name: str,
+    ) -> Tuple[Optional[str], bool]:
+        """Search Google for a LinkedIn profile URL and return the first LinkedIn result."""
+        if not self.searcher:
+            logger.error("Searcher not initialized. Call setup_driver() first.")
+            return None, False
+
+        return self.searcher.search_linkedin_profile(person_name)
     
     def filter_emails(self, emails: List[str]) -> List[str]:
         """
