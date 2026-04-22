@@ -51,20 +51,20 @@ async def run_seed_job(job_id: str) -> None:
             await ws_manager.send_event(job_id, "completed", completed_job.to_dict())
 
     except asyncio.CancelledError:
-        # Ctrl+C hit — signal cancellation to the background thread and mark job as failed
-        job_store.mark_job_cancelled(job_id)
-        seeding_logger.warning(f"Job {job_id} was cancelled by shutdown.")
+        # Ctrl+C hit — signal cancellation to the background thread and mark job as paused (stopped) to allow for potential resumption later, instead of failed which implies a non-recoverable error.
+        job_store.request_job_pause(job_id)
+        seeding_logger.warning(f"Job {job_id} was stopped by shutdown.")
         await asyncio.sleep(0.5)  # Give thread time to notice and cleanup gracefully
-        failed_job = job_store.update_status(job_id, "failed", error="Cancelled by server shutdown")
-        if failed_job is not None:
-            await ws_manager.send_event(job_id, "failed", failed_job.to_dict())
+        paused_job = job_store.update_status(job_id, "paused", error="Cancelled by server shutdown")
+        if paused_job is not None:
+            await ws_manager.send_event(job_id, "paused", paused_job.to_dict())
         raise  # must re-raise so asyncio knows the task is done
 
     except Exception as exc:
         seeding_logger.error(f"Job {job_id} failed with error: {exc}")
-        failed_job = job_store.update_status(job_id, "failed", error=str(exc))
-        if failed_job is not None:
-            await ws_manager.send_event(job_id, "failed", failed_job.to_dict())
+        paused_job = job_store.update_status(job_id, "paused", error=str(exc))
+        if paused_job is not None:
+            await ws_manager.send_event(job_id, "paused", paused_job.to_dict())
 
     finally:
         detach_websocket_log_handler(seeding_logger, ws_stream_handler)

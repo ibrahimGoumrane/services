@@ -173,12 +173,12 @@ async def stop_job(job_id: str) -> JobStatusResponse:
 
     job_store.mark_job_cancelled(job_id)
     
-    # Update status to failed (stopped)
-    stopped_job = job_store.update_status(job_id, "failed", error="Job stopped by user")
+    # Update status to paused (stopped)
+    stopped_job = job_store.update_status(job_id, "paused", error="Job stopped by user")
     if stopped_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    await ws_manager.send_event(job_id, "failed", stopped_job.to_dict())
+    await ws_manager.send_event(job_id, "paused", stopped_job.to_dict())
     return JobStatusResponse(**stopped_job.to_dict())
 
 

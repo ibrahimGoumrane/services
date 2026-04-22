@@ -246,8 +246,8 @@ class PageScraper:
                 self.driver.run(btn.mouse_click())
                 logger.info("✓ Accepted cookie consent")
                 self.driver.run(self.driver.tab.sleep(1.0))
-        except Exception as e:
-            logger.debug(f"Cookie banner not found or interaction failed: {e}")
+        except Exception:
+            logger.debug(f"Cookie banner not found or interaction failed (non-fatal)")
 
     def _human_scroll(self, steps: int = 4) -> None:
         """

@@ -192,31 +192,6 @@ class JobInterruptionRequested(Exception):
     """Raised when a pause/stop signal is detected during row processing."""
 
 
-def _safe_quit_validator(validator: "WebsiteEmailValidator", timeout: float = 15.0) -> None:
-    def _do_quit() -> None:
-        try:
-            validator.quit()
-        except Exception:
-            pass
-
-    thread = threading.Thread(target=_do_quit, daemon=True)
-    thread.start()
-    thread.join(timeout=timeout)
-    if thread.is_alive():
-        logger.warning(f"Browser quit timed out after {timeout}s; forcing cleanup")
-        try:
-            drv = getattr(validator, "driver", None)
-            if drv:
-                drv.browser = None
-                drv.tab = None
-                loop = getattr(drv, "_loop", None)
-                if loop and not loop.is_closed():
-                    loop.stop()
-                drv._loop = None
-        except Exception:
-            pass
-
-
 def _person_contact_to_tuple(p: PersonContactData) -> Tuple:
     return (
         p.email, p.fullname, p.fname, p.lname, p.website,
@@ -1145,6 +1120,7 @@ def process_database_seeding(
                     logger.info(f"Job {job_id} cancellation acknowledged during row {row_number}")
                     break
                 logger.info(f"Job {job_id} pause acknowledged during row {row_number}")
+                # close 
                 job_store.update_status(job_id, "paused")
                 flush_buffered_log_handlers(logger)
                 return stats
@@ -1158,7 +1134,7 @@ def process_database_seeding(
             job_store.cleanup_cancel_flag(job_id)
         if validator:
             logger.info("Closing NoDriver browser...")
-            _safe_quit_validator(validator)
+            validator.quit()
 
     elapsed = time.time() - start_time
     logger.info(
@@ -1283,7 +1259,7 @@ def process_single_url_seeding(
         return stats
     finally:
         if validator:
-            _safe_quit_validator(validator)
+            validator.quit()
         elapsed = time.time() - start_time
         logger.info(
             "SEED_SINGLE_URL_END "

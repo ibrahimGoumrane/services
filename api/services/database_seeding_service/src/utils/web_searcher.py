@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 from bs4 import BeautifulSoup
+from openai import max_retries
 
 from .url_utils import validate_website_http
 from .web_scraper import NoDriverDriver
@@ -60,7 +61,6 @@ class GoogleSearcher:
         self,
         business_name: str,
         location: Optional[str] = None,
-        max_retries: int = 2,
     ) -> Tuple[Optional[str], bool]:
         """
         Search Google for a business and return the first valid result URL.
@@ -71,23 +71,18 @@ class GoogleSearcher:
         """
         query = f"'{business_name}' '{location}'." if location else f"'{business_name}'"
 
-        for attempt in range(max_retries):
-            try:
-                logger.info(
-                    f"Google search: {query!r}  (attempt {attempt + 1}/{max_retries})"
-                )
-                url, ok = self._attempt_search(query)
-                if ok:
-                    return url, True
-            except Exception as exc:
-                logger.error(
-                    f"Search error (attempt {attempt + 1}/{max_retries}): {exc}"
-                )
-                if attempt < max_retries - 1:
-                    self._maybe_restart_driver(exc)
-                    time.sleep(2)
-
-        logger.error(f"Max retries ({max_retries}) reached for query: {query!r}")
+        try:
+            logger.info(
+                f"Google search: {query!r} "
+            )
+            url, ok = self._attempt_search(query)
+            if ok:
+                return url, True
+        except Exception as exc:
+            logger.error(
+                f"Search error: Google search for {query!r} failed with error: {exc}"
+            )
+            
         return None, False
 
     # ── Private: search flow ───────────────────────────────────────────────

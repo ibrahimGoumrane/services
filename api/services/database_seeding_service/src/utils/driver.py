@@ -222,7 +222,20 @@ class NoDriverDriver:
         """Persist the session to disk, stop the browser, and close the loop."""
         self._save_session()
         try:
+
             if self.browser:
+                # CLOSE ALL THE TABS 
+                tabs: List = list(getattr(self.browser, "tabs", None) or [])
+                if isinstance(tabs, dict):
+                    tabs = list(tabs.values())
+                for tab in tabs:
+                    if tab is None:
+                        continue
+                    try:
+                        self.run(tab.close())
+                    except Exception:
+                        pass
+                # Finally, stop the browser itself    
                 self.browser.stop()
                 logger.info("NoDriver browser closed")
         except Exception as e:
