@@ -48,11 +48,26 @@ export async function createJob(
   } else {
     formData.append("csv_text", input);
   }
+
+  // Extract explicit default values from __default__: mapping entries so the
+  // seeding service receives them both through the mapping (data_transformers
+  // handles __default__: in-place) and through the dedicated default_values
+  // dict (used as a fallback when a mapped CSV column is empty).
+  const defaultValues: Record<string, string> = {};
+  for (const [field, value] of Object.entries(mapping)) {
+    if (value.startsWith("__default__:")) {
+      defaultValues[field] = value.slice("__default__:".length);
+    }
+  }
+
   formData.append("csv_mapping", JSON.stringify(mapping));
   formData.append("csv_separator", separator);
   formData.append("batch_size", batchSize.toString());
   formData.append("enable_web_scraping", enableWebScraping.toString());
   formData.append("skip_google_search", skipGoogleSearch.toString());
+  if (Object.keys(defaultValues).length > 0) {
+    formData.append("default_values", JSON.stringify(defaultValues));
+  }
 
   const response = await fetch(`${BASE_URL}/jobs`, {
     method: "POST",

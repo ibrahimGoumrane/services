@@ -12,22 +12,21 @@ from bs4 import BeautifulSoup
 from .url_utils import validate_website_http
 from .web_scraper import NoDriverDriver
 
-
 logger = logging.getLogger(__name__)
 
 _SEARCH_FIELD_SELECTOR = 'textarea[name="q"], input[name="q"], #APjFqb'
 
 _LOCAL_ACTION_MAP: Dict[str, str] = {
-    "website":       "website",
-    "site web":      "website",
+    "website": "website",
+    "site web": "website",
     "site internet": "website",
-    "site":          "website",
-    "call":          "call",
-    "appeler":       "call",
-    "appel":         "call",
-    "directions":    "directions",
-    "itineraire":    "directions",
-    "itineraires":   "directions",
+    "site": "website",
+    "call": "call",
+    "appeler": "call",
+    "appel": "call",
+    "directions": "directions",
+    "itineraire": "directions",
+    "itineraires": "directions",
 }
 
 # Phrases present on Google's CAPTCHA / unusual-traffic interstitial
@@ -74,12 +73,16 @@ class GoogleSearcher:
 
         for attempt in range(max_retries):
             try:
-                logger.info(f"Google search: {query!r}  (attempt {attempt + 1}/{max_retries})")
+                logger.info(
+                    f"Google search: {query!r}  (attempt {attempt + 1}/{max_retries})"
+                )
                 url, ok = self._attempt_search(query)
                 if ok:
                     return url, True
             except Exception as exc:
-                logger.error(f"Search error (attempt {attempt + 1}/{max_retries}): {exc}")
+                logger.error(
+                    f"Search error (attempt {attempt + 1}/{max_retries}): {exc}"
+                )
                 if attempt < max_retries - 1:
                     self._maybe_restart_driver(exc)
                     time.sleep(2)
@@ -89,7 +92,9 @@ class GoogleSearcher:
 
     # ── Private: search flow ───────────────────────────────────────────────
 
-    def _attempt_search(self, query: str, required_domain: Optional[str] = None) -> Tuple[Optional[str], bool]:
+    def _attempt_search(
+        self, query: str, required_domain: Optional[str] = None
+    ) -> Tuple[Optional[str], bool]:
         """
         Single attempt: navigate to Google → inject stealth scripts →
         type query with human-like delays → handle CAPTCHA → parse SERP.
@@ -110,7 +115,9 @@ class GoogleSearcher:
         if not self._type_query(query):
             logger.debug("Typing failed – falling back to direct URL navigation")
             self.driver.run(
-                self.driver.tab.get(f"https://www.google.com/search?q={quote_plus(query)}"),
+                self.driver.tab.get(
+                    f"https://www.google.com/search?q={quote_plus(query)}"
+                ),
                 timeout_seconds=self.site_timeout_seconds,
             )
 
@@ -121,7 +128,9 @@ class GoogleSearcher:
 
         # Check for CAPTCHA / unusual-traffic interstitial before reading results
         if self._google_captcha_detected():
-            logger.warning("⚠️ Google CAPTCHA detected — search aborted for this attempt")
+            logger.warning(
+                "⚠️ Google CAPTCHA detected — search aborted for this attempt"
+            )
             return None, False
 
         html = str(
@@ -175,7 +184,9 @@ class GoogleSearcher:
         if not query or not self.driver.tab:
             return False
         try:
-            field = self.driver.run(self.driver.tab.select(_SEARCH_FIELD_SELECTOR, timeout=3))
+            field = self.driver.run(
+                self.driver.tab.select(_SEARCH_FIELD_SELECTOR, timeout=3)
+            )
             if not field:
                 return False
 
@@ -193,7 +204,9 @@ class GoogleSearcher:
             # instantly hit Enter
             self.driver.run(self.driver.tab.sleep(random.uniform(0.4, 1.0)))
 
-            button = self.driver.run(self.driver.tab.select('input[name="btnK"]', timeout=2))
+            button = self.driver.run(
+                self.driver.tab.select('input[name="btnK"]', timeout=2)
+            )
             if not button:
                 return False
 
@@ -230,7 +243,9 @@ class GoogleSearcher:
 
     # ── Private: result extraction ─────────────────────────────────────────
 
-    def _extract_first_result(self, html: str, required_domain: Optional[str] = None) -> Optional[str]:
+    def _extract_first_result(
+        self, html: str, required_domain: Optional[str] = None
+    ) -> Optional[str]:
         """
         Parse SERP HTML and return the first validated external URL.
 
@@ -268,7 +283,9 @@ class GoogleSearcher:
         actions: Dict[str, str] = {}
         for block in root.select("div.bkaPDb"):
             label_el = block.select_one("span.aSAiSd")
-            key = self._normalize_label(label_el.get_text(" ", strip=True) if label_el else "")
+            key = self._normalize_label(
+                label_el.get_text(" ", strip=True) if label_el else ""
+            )
             if not key:
                 continue
 
@@ -316,7 +333,7 @@ class GoogleSearcher:
             qs = parse_qs(urlparse(href).query)
             return (qs.get("q", [""])[0] or qs.get("url", [""])[0]).strip()
         if href.startswith("/"):
-            return ""   # internal Google link – discard
+            return ""  # internal Google link – discard
         if href.startswith(("http://", "https://")):
             return href.strip()
         return ""
@@ -329,6 +346,172 @@ class GoogleSearcher:
             if not host.endswith(required_domain):
                 return False
         return validate_website_http(url, excluded_domains=self._excluded)
+
+    def search_linkedin_profile(
+        self,
+        fullname: str,
+        fname: str = "",
+        lname: str = "",
+    ) -> Tuple[Optional[str], bool]:
+        """
+        Search for a LinkedIn /in/ profile URL using 'name site:linkedin.com/in'.
+        Single attempt — no retry loop.
+        """
+        name = (fullname or "").strip() or " ".join(
+            p for p in [fname, lname] if p
+        ).strip()
+        if not name:
+            return None, False
+
+        query = f"{name} site:linkedin.com/in"
+        logger.info(f"LinkedIn profile search: {query!r}")
+        try:
+            if not self.driver.tab:
+                return None, False
+            self.driver.run(
+                self.driver.tab.get("https://www.google.com"),
+                timeout_seconds=self.site_timeout_seconds,
+            )
+            self.driver.inject_stealth_scripts()
+            self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
+            if not self._type_query(query):
+                self.driver.run(
+                    self.driver.tab.get(
+                        f"https://www.google.com/search?q={quote_plus(query)}"
+                    ),
+                    timeout_seconds=self.site_timeout_seconds,
+                )
+            self._accept_cookies()
+            self.driver.run(self.driver.tab.sleep(random.uniform(2.0, 2.8)))
+            if self._google_captcha_detected():
+                logger.warning("⚠️ Google CAPTCHA — LinkedIn profile search aborted")
+                return None, False
+            html = str(
+                self.driver.run(
+                    self.driver.tab.get_content(),
+                    timeout_seconds=self.site_timeout_seconds,
+                )
+                or ""
+            )
+            url = self._extract_linkedin_profile_url(html)
+            if url:
+                logger.info(f"✓ LinkedIn profile found: {url}")
+                return url, True
+            logger.warning("No LinkedIn profile URL found in SERP")
+            return None, False
+        except Exception as exc:
+            logger.error(f"LinkedIn profile search error: {exc}")
+            return None, False
+
+    def _extract_linkedin_profile_url(self, html: str) -> Optional[str]:
+        """
+        Extract the first linkedin.com/in/... profile URL from SERP HTML.
+
+        HTTP validation is intentionally skipped since LinkedIn returns 999
+        for automated HEAD/GET requests.
+        """
+        soup = BeautifulSoup(html or "", "html.parser")
+
+        for container in soup.select(".A6K0A"):
+            anchor = container.select_one('a[jsname="UWckNb"]')
+            if not anchor:
+                continue
+            candidate = self._resolve_href((anchor.get("href") or "").strip())
+            if not candidate:
+                continue
+            try:
+                parsed = urlparse(candidate)
+                host = (parsed.netloc or "").lower()
+                if host.startswith("www."):
+                    host = host[4:]
+                path = (parsed.path or "").lower()
+                if (
+                    host == "linkedin.com" or host.endswith(".linkedin.com")
+                ) and path.startswith("/in/"):
+                    return candidate
+            except Exception:
+                continue
+
+        return None
+
+    def search_linkedin_company(
+        self,
+        company_name: str,
+    ) -> Tuple[Optional[str], bool]:
+        """
+        Search for a company LinkedIn page using 'company_name site:linkedin.com/company'.
+        Single attempt — no retry loop.
+        """
+        name = (company_name or "").strip()
+        if not name:
+            return None, False
+
+        query = f"{name} site:linkedin.com/company"
+        logger.info(f"LinkedIn company search: {query!r}")
+        try:
+            if not self.driver.tab:
+                return None, False
+            self.driver.run(
+                self.driver.tab.get("https://www.google.com"),
+                timeout_seconds=self.site_timeout_seconds,
+            )
+            self.driver.inject_stealth_scripts()
+            self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
+            if not self._type_query(query):
+                self.driver.run(
+                    self.driver.tab.get(
+                        f"https://www.google.com/search?q={quote_plus(query)}"
+                    ),
+                    timeout_seconds=self.site_timeout_seconds,
+                )
+            self._accept_cookies()
+            self.driver.run(self.driver.tab.sleep(random.uniform(2.0, 2.8)))
+            if self._google_captcha_detected():
+                logger.warning("⚠️ Google CAPTCHA — LinkedIn company search aborted")
+                return None, False
+            html = str(
+                self.driver.run(
+                    self.driver.tab.get_content(),
+                    timeout_seconds=self.site_timeout_seconds,
+                )
+                or ""
+            )
+            url = self._extract_linkedin_company_url(html)
+            if url:
+                logger.info(f"✓ LinkedIn company page found: {url}")
+                return url, True
+            logger.warning("No LinkedIn company URL found in SERP")
+            return None, False
+        except Exception as exc:
+            logger.error(f"LinkedIn company search error: {exc}")
+            return None, False
+
+    def _extract_linkedin_company_url(self, html: str) -> Optional[str]:
+        """
+        Extract the first linkedin.com/company/... URL from SERP HTML.
+        HTTP validation intentionally skipped (LinkedIn returns 999 to bots).
+        """
+        soup = BeautifulSoup(html or "", "html.parser")
+        for container in soup.select(".A6K0A"):
+            anchor = container.select_one('a[jsname="UWckNb"]')
+            if not anchor:
+                continue
+            candidate = self._resolve_href((anchor.get("href") or "").strip())
+            if not candidate:
+                continue
+            try:
+                parsed = urlparse(candidate)
+                host = (parsed.netloc or "").lower()
+                if host.startswith("www."):
+                    host = host[4:]
+                path = (parsed.path or "").lower()
+                if (
+                    host == "linkedin.com" or host.endswith(".linkedin.com")
+                ) and path.startswith("/company/"):
+                    return candidate
+            except Exception:
+                continue
+        return None
 
     def _maybe_restart_driver(self, exc: Exception) -> None:
         if "timeout" in str(exc).lower() or "timed out" in str(exc).lower():

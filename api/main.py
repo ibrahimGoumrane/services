@@ -5,22 +5,33 @@ from api.routes.jobs import router as jobs_router
 from api.routes.ws import router as ws_router
 import asyncio
 import os
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: initialize shared state, background tasks, etc.
     yield
     # Shutdown: clean up resources, stop background tasks, etc.
-    
-    tasks = [
-        t for t in asyncio.all_tasks()
-        if t is not asyncio.current_task()
+
+    current_task = asyncio.current_task()
+    seed_tasks = [
+        t
+        for t in asyncio.all_tasks()
+        if t is not current_task and t.get_name().startswith("seed-job:")
     ]
 
-    for task in tasks:
+    for task in seed_tasks:
         task.cancel()
 
-    await asyncio.gather(*tasks, return_exceptions=True)
+    if seed_tasks:
+        try:
+            await asyncio.gather(*seed_tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            # Uvicorn may cancel lifespan during reload; keep shutdown clean.
+            logger.debug("Lifespan shutdown gather cancelled during reload")
 
 
 app = FastAPI(title="Database Seeding API", version="0.1.0", lifespan=lifespan)

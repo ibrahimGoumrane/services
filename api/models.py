@@ -4,7 +4,6 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
-
 JobStatus = Literal["queued", "running", "paused", "completed", "failed"]
 
 
@@ -67,7 +66,7 @@ class SeedDatabaseRequest(BaseModel):
                 f"csv_mapping must include at least one of: {', '.join(required_fields)}"
             )
 
-        return value
+        return normalized_mapping
 
 
 class UrlScrapeRequest(BaseModel):

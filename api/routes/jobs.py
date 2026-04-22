@@ -18,6 +18,10 @@ router = APIRouter(tags=["jobs"])
 UPLOADS_DIR = Path(__file__).resolve().parents[2] / "uploads"
 
 
+def _schedule_seed_job(job_id: str) -> None:
+    asyncio.create_task(run_seed_job(job_id), name=f"seed-job:{job_id}")
+
+
 def _parse_json_field(field_name: str, value: str | None, default: dict | None = None) -> dict | None:
     if value is None:
         return default
@@ -106,7 +110,7 @@ async def create_job(
 
     job = job_store.create_job(job_payload)
     await ws_manager.send_event(job.job_id, "queued", job.to_dict())
-    asyncio.create_task(run_seed_job(job.job_id))
+    _schedule_seed_job(job.job_id)
 
     return CreateJobResponse(job_id=job.job_id, status=job.status)
 
@@ -123,7 +127,7 @@ async def create_url_job(payload: UrlScrapeRequest) -> CreateJobResponse:
 
     job = job_store.create_job(job_payload)
     await ws_manager.send_event(job.job_id, "queued", job.to_dict())
-    asyncio.create_task(run_seed_job(job.job_id))
+    _schedule_seed_job(job.job_id)
 
     return CreateJobResponse(job_id=job.job_id, status=job.status)
 
@@ -157,13 +161,25 @@ async def resume_job(job_id: str) -> JobStatusResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     await ws_manager.send_event(job_id, "queued", queued_job.to_dict())
-    asyncio.create_task(run_seed_job(job_id))
+    _schedule_seed_job(job_id)
     return JobStatusResponse(**queued_job.to_dict())
 
 
 @router.post("/jobs/{job_id}/stop", response_model=JobStatusResponse)
 async def stop_job(job_id: str) -> JobStatusResponse:
-    return await pause_job(job_id)
+    job = job_store.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    job_store.mark_job_cancelled(job_id)
+    
+    # Update status to failed (stopped)
+    stopped_job = job_store.update_status(job_id, "failed", error="Job stopped by user")
+    if stopped_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    await ws_manager.send_event(job_id, "failed", stopped_job.to_dict())
+    return JobStatusResponse(**stopped_job.to_dict())
 
 
 @router.get("/jobs", response_model=list[JobStatusResponse])

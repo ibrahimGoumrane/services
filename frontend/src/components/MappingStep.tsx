@@ -47,10 +47,6 @@ const OPTIONAL_FIELDS: FieldConfig[] = [
   { id: "urlcontactform", label: "Contact Form URL", isRequired: false },
   { id: "linkedin", label: "LinkedIn", isRequired: false },
   { id: "image", label: "Image", isRequired: false },
-  { id: "mx", label: "MX", isRequired: false },
-  { id: "emailgeneric", label: "Email Generic", isRequired: false },
-  { id: "usergeneric", label: "User Generic", isRequired: false },
-  { id: "syntaxeemail", label: "Email Syntax", isRequired: false },
   { id: "sourcefile", label: "Source File", isRequired: false },
 ];
 
