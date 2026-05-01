@@ -1,11 +1,10 @@
 """Main CSV processing and database seeding orchestrator."""
 
-import threading
 import time
 import uuid
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple , Literal
 from urllib.parse import urlparse
+from .models import ProcessingConfig, CsvRow , RowStats , PersonContactData , CompanyContactData , ScrapedWebData
 
 import pandas as pd
 
@@ -24,104 +23,7 @@ logger = get_logger(__name__)
 SITE_TIMEOUT_SECONDS = 30
 PERIODIC_BROWSER_RESTART_BATCHES = 100
 
-# ---------------------------------------------------------------------------
-# Data containers
-# ---------------------------------------------------------------------------
 
-@dataclass
-class CsvRow:
-    """All values extracted from a single CSV row at the start of processing."""
-    fullname: str = ""
-    fname: str = ""
-    lname: str = ""
-    name: str = ""
-    email: str = ""
-    website: str = ""
-    phone: Optional[str] = None
-    mobile: Optional[str] = None
-    fax: Optional[str] = None
-    linkedin: Optional[str] = None
-    position: Optional[str] = None
-    address: Optional[str] = None
-    city: str = ""
-    zip_code: Optional[str] = None
-    country: str = ""
-    location: str = ""
-    contact_form_url: Optional[str] = None
-    image: Optional[str] = None
-    sourcefile: Optional[str] = None
-    ca: Optional[str] = None
-    activite: str = ""
-
-
-@dataclass
-class PersonContactData:
-    """Enriched contact data for a person (fname + lname / fullname)."""
-    email: str = ""
-    fullname: Optional[str] = None
-    fname: Optional[str] = None
-    lname: Optional[str] = None
-    website: Optional[str] = None
-    position: Optional[str] = None
-    phone: Optional[str] = None
-    mobile: Optional[str] = None
-    fax: Optional[str] = None
-    name: Optional[str] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    zip_code: Optional[str] = None
-    country: Optional[str] = None
-    contact_form_url: Optional[str] = None
-    linkedin: Optional[str] = None
-    image: Optional[str] = None
-    mx_host: Optional[str] = None
-    is_generic_email: bool = False
-    is_user_generic: bool = False
-    status: str = "valid"
-    sourcefile: Optional[str] = None
-    ca: Optional[str] = None
-    activite: str = ""
-
-
-@dataclass
-class CompanyContactData:
-    """Enriched contact data for a company (company name / website)."""
-    email: str = ""
-    website: Optional[str] = None
-    phone: Optional[str] = None
-    name: Optional[str] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    zip_code: Optional[str] = None
-    country: Optional[str] = None
-    contact_form_url: Optional[str] = None
-    linkedin: Optional[str] = None
-    position: Optional[str] = None
-    image: Optional[str] = None
-    mx_host: Optional[str] = None
-    is_generic_email: bool = False
-    is_user_generic: bool = False
-    status: str = "valid"
-    sourcefile: Optional[str] = None
-    ca: Optional[str] = None
-    activite: str = ""
-
-
-@dataclass
-class RowStats:
-    contact_form_found: bool = False
-    synthetic_email_used: bool = False
-
-
-@dataclass
-class ScrapedWebData:
-    """Raw data returned from website scraping."""
-    emails: List[str] = field(default_factory=list)
-    phones: List[str] = field(default_factory=list)
-    contact_page: Optional[str] = None
-    location: Optional[str] = None
-    city: Optional[str] = None
-    country: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -193,24 +95,7 @@ class JobInterruptionRequested(Exception):
     """Raised when a pause/stop signal is detected during row processing."""
 
 
-def _person_contact_to_tuple(p: PersonContactData) -> Tuple:
-    return (
-        p.email, p.fullname, p.fname, p.lname, p.website,
-        p.position, p.phone, p.mobile, p.fax, p.name,
-        p.address, p.city, p.zip_code, p.country, p.contact_form_url,
-        p.linkedin, p.image, p.mx_host, p.is_generic_email, p.is_user_generic,
-        p.status, p.sourcefile, p.ca, p.activite,
-    )
 
-
-def _company_contact_to_tuple(c: CompanyContactData) -> Tuple:
-    return (
-        c.email, None, None, None, c.website,
-        c.position, c.phone, None, None, c.name,
-        c.address, c.city, c.zip_code, c.country, c.contact_form_url,
-        c.linkedin, c.image, c.mx_host, c.is_generic_email, c.is_user_generic,
-        c.status, c.sourcefile, c.ca, c.activite,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -356,16 +241,23 @@ def _resolve_website(
         else:
             search_query = f"{csv.name} {csv.location}"
         logger.info(f"Website search: '{search_query}'")
-        found_url, _ = validator.searcher.search(search_query)
+        urls, local_panel = validator.search_google(search_query, looking_for="website")
 
-        if found_url and validator.validate_website(found_url):
-            logger.info(f"Website search SUCCESS: '{found_url}'")
-            existing = contact_repository.get_contact_by_domain(found_url)
-            if existing:
-                logger.info("Website domain (search result) already in DB; reusing stored fields")
-                _populate_from_db(existing, csv)
-                return found_url, False
-            return found_url, True
+        # Prefer the local-panel website, then fall back to organic results
+        candidates: List[str] = []
+        if local_panel and local_panel.get("website"):
+            candidates.append(local_panel["website"])
+        candidates.extend(urls)
+
+        for candidate in candidates:
+            if validator.validate_website(candidate):
+                logger.info(f"Website search SUCCESS: '{candidate}'")
+                existing = contact_repository.get_contact_by_domain(candidate)
+                if existing:
+                    logger.info("Website domain (search result) already in DB; reusing stored fields")
+                    _populate_from_db(existing, csv)
+                    return candidate, False
+                return candidate, True
 
     return "", False
 
@@ -405,7 +297,6 @@ def _scrape_website(url: str, validator: WebsiteEmailValidator) -> ScrapedWebDat
 def _resolve_mx(
     email: str,
     is_generic: bool,
-    synthetic: bool,
     mx_cache: Dict,
     new_mx_records: List,
     generic_mx: Set[str],
@@ -415,7 +306,7 @@ def _resolve_mx(
     Return *(mx_host, is_generic_email)*.
     MX is only looked up for non-generic, non-synthetic emails.
     """
-    if is_generic or synthetic:
+    if email.endswith("@nodomaine.com"):
         return None, is_generic
 
     _, domain = email.split("@", 1)
@@ -530,19 +421,16 @@ def _enrich_person(
     if not validator.skip_website_search and not person.linkedin and person.fullname:
         try:
             logger.info(f"Person LinkedIn search: '{person.fullname}'")
-            li_url, ok = validator.searcher.search_linkedin_profile(
-                fullname=person.fullname or "",
-                fname=csv.fname or "",
-                lname=csv.lname or "",
+            urls, _ = validator.search_google(
+                person.fullname, looking_for="linkedin_profile"
             )
-            if ok and li_url:
-                person.linkedin = li_url
+            if urls:
+                person.linkedin = urls[0]
                 logger.info(f"Person LinkedIn found: '{person.linkedin}'")
         except Exception as exc:
             logger.debug(f"Person LinkedIn search failed (non-fatal): {exc}")
 
     # --- Synthetic e-mail fallback ----------------------------------------
-    synthetic = False
     if not person.email or "@" not in person.email:
         fallback_domain = extract_domain(website) or "nodomaine.com"
         person.email = _make_synthetic_email(
@@ -552,19 +440,8 @@ def _enrich_person(
             csv.fullname or "",
             csv.name or "",
         )
-        synthetic = True
         row_stats.synthetic_email_used = True
         logger.info(f"Synthetic fallback email: '{person.email}'")
-
-    # --- Normalise e-mail domain ------------------------------------------
-    _, domain = person.email.split("@", 1)
-    domain = domain.strip().lower()
-    if not domain:
-        local = person.email.split("@", 1)[0].strip() or f"postmaster+{uuid.uuid4().hex}"
-        domain = "nodomaine.com"
-        person.email = f"{local}@{domain}"
-        synthetic = True
-        row_stats.synthetic_email_used = True
 
     # --- E-mail classification -------------------------------------------
     is_generic, is_user_generic = email_classifiers.classify_email(
@@ -573,7 +450,7 @@ def _enrich_person(
 
     # --- MX resolution ---------------------------------------------------
     mx_host, is_generic = _resolve_mx(
-        person.email, is_generic, synthetic, mx_cache, new_mx_records, generic_mx, site_builder_domains
+        person.email, is_generic, mx_cache, new_mx_records, generic_mx, site_builder_domains
     )
     person.mx_host = mx_host
     person.is_generic_email = is_generic
@@ -660,10 +537,12 @@ def _enrich_company(
     if not validator.skip_website_search and csv.name and not company.linkedin:
         try:
             logger.info(f"Company LinkedIn search: '{csv.name}'")
-            co_li_url, ok = validator.searcher.search_linkedin_company(csv.name)
-            if ok and co_li_url:
-                company.linkedin = co_li_url
-                logger.info(f"Company LinkedIn found: '{co_li_url}'")
+            urls, _ = validator.search_google(
+                csv.name, looking_for="linkedin_company"
+            )
+            if urls:
+                company.linkedin = urls[0]
+                logger.info(f"Company LinkedIn found: '{company.linkedin}'")
         except Exception as exc:
             logger.debug(f"Company LinkedIn search failed (non-fatal): {exc}")
 
@@ -808,7 +687,7 @@ def _process_contact_row(
             new_mx_records=new_mx_records,
         )
         if company is not None:
-            extra_contacts.append(_company_contact_to_tuple(company))
+            extra_contacts.append(company.to_tuple())
             logger.info(f"Company contact staged for '{website}'")
 
             # Back-fill company LinkedIn onto the person record if missing
@@ -816,7 +695,7 @@ def _process_contact_row(
                 person.linkedin = company.linkedin
 
 
-    return _person_contact_to_tuple(person), row_stats, extra_contacts
+    return person.to_tuple(), row_stats, extra_contacts
 
 
 # ---------------------------------------------------------------------------
@@ -1190,17 +1069,17 @@ def process_single_url_seeding(
     )
 
     start_time = time.time()
-    validator = None
+    validator = WebsiteEmailValidator(
+            skip_website_search=skip_google_search,
+            site_timeout_seconds=SITE_TIMEOUT_SECONDS,
+        )
+    validator.setup_driver()
     try:
         generic_domains, generic_users, generic_mx, site_builder_domains, not_visiting_domains = (
             _load_reference_data()
         )
 
-        validator = WebsiteEmailValidator(
-            skip_website_search=skip_google_search,
-            site_timeout_seconds=SITE_TIMEOUT_SECONDS,
-        )
-        validator.setup_driver()
+        
         validator.update_reference_filters(
             generic_domains=generic_domains,
             generic_users=generic_users,

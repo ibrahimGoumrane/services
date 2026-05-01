@@ -4,9 +4,12 @@ from typing import Dict, List, Literal, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from ..utils.email_validators import EmailValidator
+from ..utils.extractor_email import extract_emails_from_text
+from ..utils.extractor_geo import extract_location_city_country
+from ..utils.extractor_phone import extract_phones_from_text
+from ..utils.url_utils import normalize_url, validate_website_http
 from api.services.utils.logging_config import get_logger
-from ..utils.url_utils import validate_website_http
-from .web_scraper import NoDriverDriver, PageScraper
+from .web_scraper import NoDriverDriver, PageScraper, _dedupe, extract_contact_links
 from .web_searcher import GoogleSearcher
 
 logger = get_logger("dbSeeder.web_validator")
@@ -168,21 +171,75 @@ class WebsiteEmailValidator:
     ) -> Tuple[
         List[str], List[str], Optional[str], Optional[str], Optional[str], Optional[str]
     ]:
-        """Scrape *website_url* for emails, phones, contact page, and geo hints."""
+        """
+        Scrape *website_url* for emails, phones, contact page, and geo hints.
+        Orchestrates homepage fetch → extraction → optional contact-page crawl.
+        """
         if not self.scraper:
             logger.error("Scraper not initialized. Call setup_driver() first.")
             return [], [], None, None, None, None
 
-        logger.info(
-            f"[validator] find_contact_info_on_website start url={website_url}"
-        )
-        result = self.scraper.find_contact_info_on_website(website_url)
-        logger.info(
-            f"[validator] find_contact_info_on_website done url={website_url} "
-            f"emails={len(result[0])} phones={len(result[1])} contact_page={result[2]!r} "
-            f"location={result[3]!r} city={result[4]!r} country={result[5]!r}"
-        )
-        return result
+        if not website_url:
+            return [], [], None, None, None, None
+
+        website_url = normalize_url(website_url)
+        logger.info(f"[validator] find_contact_info_on_website start url={website_url}")
+
+        try:
+            # ── 1. Fetch & extract homepage ──────────────────────────────
+            homepage_html = self.scraper.fetch_page(website_url)
+            if not homepage_html:
+                logger.info(
+                    f"[validator] find_contact_info_on_website done url={website_url} "
+                    f"(empty homepage)"
+                )
+                return [], [], None, None, None, None
+
+            all_emails = extract_emails_from_text(homepage_html)
+            all_phones = extract_phones_from_text(homepage_html)
+            location, city, country = extract_location_city_country(homepage_html)
+            contact_candidates = extract_contact_links(
+                website_url, homepage_html, url_ok=self.scraper._http_ok
+            )
+            contact_page = contact_candidates[0] if contact_candidates else None
+
+            # ── 2. Crawl contact pages if missing email or phone ─────────
+            if all_emails and all_phones:
+                logger.info("[validator] Homepage has both email and phone; skipping contact-page crawl")
+            else:
+                logger.info("[validator] Contact-page crawl triggered")
+                for url in contact_candidates:
+                    try:
+                        html = self.scraper.fetch_page(url)
+                        if not html:
+                            continue
+
+                        all_emails.extend(extract_emails_from_text(html))
+                        all_phones.extend(extract_phones_from_text(html))
+
+                        if not (location and city and country):
+                            location, city, country = extract_location_city_country(html)
+
+                        if all_emails and all_phones:
+                            break
+                    except Exception:
+                        logger.exception(
+                            f"[validator] contact page scrape failed url={url}"
+                        )
+
+            all_emails = _dedupe(all_emails)
+            all_phones = _dedupe(all_phones)
+            logger.info(
+                f"[validator] find_contact_info_on_website done url={website_url} "
+                f"emails={len(all_emails)} phones={len(all_phones)} "
+                f"contact_page={contact_page!r} location={location!r} "
+                f"city={city!r} country={country!r}"
+            )
+            return all_emails, all_phones, contact_page, location, city, country
+
+        except Exception as exc:
+            logger.error(f"[validator] Error finding contact info: {exc}")
+            return [], [], None, None, None, None
 
     def prepare_next_batch(self) -> None:
         """Close popup tabs and create a clean tab for the next batch cycle."""
