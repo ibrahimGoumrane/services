@@ -37,7 +37,7 @@ class EmailValidator:
             f"{len(self.generic_users)} generic users, {len(self.site_builder_domains)} site builders"
         )
 
-    def filter_emails(self, emails: List[str]) -> List[str]:
+    def filter_emails(self, emails: List[str]) -> Optional[str]:
         """
         Filter emails based on generic domains, users, and site builder domains.
 
@@ -45,12 +45,10 @@ class EmailValidator:
             emails: List of email addresses to filter
 
         Returns:
-            List of valid emails after filtering
+            First valid email after filtering, or None if no valid email found
         """
-        if not emails:
-            return []
-
-        filtered = []
+        if not emails or len(emails) == 0:
+            return None
 
         for email in emails:
             email_lower = email.lower().strip()
@@ -60,7 +58,7 @@ class EmailValidator:
                 logger.debug(f"Skipping invalid email format: {email}")
                 continue
 
-            user_part, domain_part = email_lower.rsplit("@", 1)
+            _, domain_part = email_lower.rsplit("@", 1)
 
             is_generic, _ = classify_email(
                 email=email_lower,
@@ -80,13 +78,7 @@ class EmailValidator:
                 logger.debug(f"Skipping email with excluded domain: {email}")
                 continue
 
-            filtered.append(email)
+            logger.debug(f"Email passed validation: {email}")         
+            return email.strip().lower()
 
-        if emails and not filtered:
-            logger.info(f"All {len(emails)} email(s) were filtered out")
-        elif filtered:
-            logger.info(
-                f"Kept {len(filtered)} valid email(s) out of {len(emails)} found"
-            )
-
-        return filtered
+        return emails[0]

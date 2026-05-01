@@ -2,13 +2,13 @@
 
 from typing import List, Optional, Tuple
 
-from .email_validators import EmailValidator
+from ..utils.email_validators import EmailValidator
 from api.services.utils.logging_config import get_logger
-from .url_utils import validate_website_http
+from ..utils.url_utils import validate_website_http
 from .web_scraper import NoDriverDriver, PageScraper
 from .web_searcher import GoogleSearcher
 
-logger = get_logger("dbSeeder.website_validator")
+logger = get_logger("dbSeeder.web_validator")
 
 
 class WebsiteEmailValidator:

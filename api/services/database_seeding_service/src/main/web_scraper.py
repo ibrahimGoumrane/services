@@ -9,10 +9,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from .driver import NoDriverDriver
-from .geo_extractor import extract_location_city_country
-from .url_utils import normalize_url, validate_website_http
-from .email_extractors import extract_emails_from_text
+from ..utils.driver import NoDriverDriver
+from ..utils.geo_extractor import extract_location_city_country
+from ..utils.url_utils import normalize_url, validate_website_http
+from ..utils.email_extractors import extract_emails_from_text
 from api.services.utils.logging_config import get_logger
 
 
@@ -159,9 +159,8 @@ class PageScraper:
         if not self.driver.tab:
             raise RuntimeError("Driver tab not initialized. Call setup() first.")
 
-        # Navigate and immediately register fingerprint patches for this origin
+        # Navigate to the target page
         self.driver.run(self.driver.tab.get(url), timeout_seconds=self.site_timeout_seconds)
-        self.driver.inject_stealth_scripts()
 
         # Wait briefly for the page to settle before probing for challenges
         self.driver.run(self.driver.tab.sleep(1.5))

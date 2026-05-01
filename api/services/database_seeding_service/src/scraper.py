@@ -17,7 +17,7 @@ from .utils import contact_repository, data_transformers, email_classifiers, mx_
 from api.services.utils.logging_config import flush_buffered_log_handlers, get_logger, setup_logging
 from .utils.tld_country_mapper import get_country_from_email_domain
 from .utils.url_utils import extract_domain
-from .utils.website_validator import WebsiteEmailValidator
+from .main.web_validator import WebsiteEmailValidator
 
 logger = get_logger(__name__)
 
@@ -483,8 +483,9 @@ def _enrich_person(
     extracted from *csv*.  Scraped web data is used only to fill gaps not already
     covered by CSV values.
     """
+
     person = PersonContactData(
-        fullname=csv.fullname or None,
+        fullname=csv.fullname or " ".join(part for part in [csv.fname, csv.lname] if part) or None,
         fname=csv.fname or None,
         lname=csv.lname or None,
         name=csv.name or None,
@@ -513,10 +514,7 @@ def _enrich_person(
         logger.info(f"Contact form found: '{scraped.contact_page}'")
 
     if not person.email and scraped.emails:
-        filtered = validator.email_validator.filter_emails(scraped.emails)
-        if filtered:
-            person.email = filtered[0].strip().lower()
-            logger.info(f"Email found on website: '{person.email}'")
+        person.email = validator.email_validator.filter_emails(scraped.emails)
 
     if not person.phone and scraped.phones:
         person.phone = (scraped.phones[0] or "").strip() or None

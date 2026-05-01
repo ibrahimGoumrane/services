@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 from bs4 import BeautifulSoup
 from openai import max_retries
 
-from .url_utils import validate_website_http
+from ..utils.url_utils import validate_website_http
 from .web_scraper import NoDriverDriver
 
 logger = logging.getLogger(__name__)
@@ -101,9 +101,6 @@ class GoogleSearcher:
             self.driver.tab.get("https://www.google.com"),
             timeout_seconds=self.site_timeout_seconds,
         )
-
-        # Inject canvas-noise + WebGL-spoof before Google's fingerprinting fires
-        self.driver.inject_stealth_scripts()
 
         self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
 
@@ -367,7 +364,6 @@ class GoogleSearcher:
                 self.driver.tab.get("https://www.google.com"),
                 timeout_seconds=self.site_timeout_seconds,
             )
-            self.driver.inject_stealth_scripts()
             self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
             if not self._type_query(query):
                 self.driver.run(
@@ -450,7 +446,6 @@ class GoogleSearcher:
                 self.driver.tab.get("https://www.google.com"),
                 timeout_seconds=self.site_timeout_seconds,
             )
-            self.driver.inject_stealth_scripts()
             self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
             if not self._type_query(query):
                 self.driver.run(
