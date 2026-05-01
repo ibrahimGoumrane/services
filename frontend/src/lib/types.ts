@@ -1,9 +1,16 @@
-export type JobStatus =
-  | "queued"
-  | "running"
-  | "paused"
-  | "completed"
-  | "failed";
+export type JobStatus = "running" | "paused";
+
+export type JobDisplayStatus = "queued" | "running" | "paused" | "completed" | "failed";
+
+export function deriveDisplayStatus(snapshot: JobSnapshot): JobDisplayStatus {
+  if (snapshot.status === "running") return "running";
+  if (snapshot.error) return "failed";
+  const total = snapshot.total_rows ?? 0;
+  const current = snapshot.current_row ?? 0;
+  if (total > 0 && current >= total) return "completed";
+  if (total > 0 && current < total) return "paused";
+  return "queued";
+}
 
 export interface JobResponse {
   job_id: string;
@@ -62,7 +69,6 @@ export interface LogEntry {
 export interface WSEvent {
   type:
     | "snapshot"
-    | "queued"
     | "started"
     | "stream"
     | "paused"

@@ -3,7 +3,7 @@
 from typing import List, Optional, Tuple
 
 from .email_validators import EmailValidator
-from .logging_config import get_logger
+from api.services.utils.logging_config import get_logger
 from .url_utils import validate_website_http
 from .web_scraper import NoDriverDriver, PageScraper
 from .web_searcher import GoogleSearcher

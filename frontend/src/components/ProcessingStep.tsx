@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { useJobPolling } from "../hooks/useJobPolling";
-import { JobStatus, JobMetrics, LogEntry } from "../lib/types";
+import { JobDisplayStatus, JobMetrics, LogEntry, JobSnapshot, deriveDisplayStatus } from "../lib/types";
 import { pauseJob, resumeJob } from "../lib/api";
 import {
   Loader2,
@@ -14,6 +14,7 @@ import {
   Play,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
 interface ProcessingStepProps {
   jobId: string;
   onComplete: (
@@ -23,7 +24,9 @@ interface ProcessingStepProps {
     logs?: LogEntry[],
   ) => void;
 }
-const STATUS_ORDER = ["queued", "running", "paused", "completed"];
+
+const STATUS_ORDER: JobDisplayStatus[] = ["queued", "running", "paused", "completed"];
+
 const containerVariants = {
   hidden: {
     opacity: 0,
@@ -35,6 +38,7 @@ const containerVariants = {
     },
   },
 };
+
 const itemVariants = {
   hidden: {
     opacity: 0,
@@ -45,21 +49,23 @@ const itemVariants = {
     y: 0,
   },
 };
+
 export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
   const { status, logs, metrics, error, isConnected } = useWebSocket(jobId);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
   const isPaused = status === "paused";
   const isActive = status === "queued" || status === "running";
-  const handlePollingUpdate = (
-    polledStatus: JobStatus,
-    polledMetrics?: JobMetrics,
-    polledError?: string,
-  ) => {
-    if (polledStatus === "completed" || polledStatus === "failed") {
-      onComplete(polledStatus, polledMetrics || metrics, polledError, logs);
+
+  const handlePollingUpdate = (snapshot: JobSnapshot) => {
+    const display = deriveDisplayStatus(snapshot);
+    if (display === "completed" || display === "failed") {
+      onComplete(display, metrics, snapshot.error ?? undefined, logs);
     }
   };
+
   useJobPolling(jobId, status, isConnected, handlePollingUpdate);
+
   useEffect(() => {
     if (logsEndRef.current) {
       logsEndRef.current.scrollIntoView({
@@ -67,6 +73,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
       });
     }
   }, [logs]);
+
   useEffect(() => {
     if (status === "completed" || status === "failed") {
       const timer = setTimeout(() => {
@@ -75,7 +82,8 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
       return () => clearTimeout(timer);
     }
   }, [status, metrics, error, onComplete, logs]);
-  const getStatusIcon = (stepStatus: string) => {
+
+  const getStatusIcon = (stepStatus: JobDisplayStatus) => {
     if (status === "failed" && stepStatus === "running")
       return <XCircle className="w-5 h-5 text-rose-500" />;
     const currentIndex = STATUS_ORDER.indexOf(status || "queued");
@@ -95,6 +103,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
     }
     return <Clock className="w-5 h-5 text-slate-600" />;
   };
+
   const getLogLevelColor = (level: string) => {
     switch (level) {
       case "INFO":
@@ -109,6 +118,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
         return "text-slate-400 bg-slate-800 border-slate-700";
     }
   };
+
   return (
     <motion.div
       variants={containerVariants}
@@ -173,9 +183,9 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
               <Activity className="w-4 h-4 text-violet-400" /> Status
             </h3>
             <div className="flex flex-col gap-6 relative before:absolute before:inset-0 before:ml-[11px] before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-slate-700 before:via-slate-800 before:to-transparent">
-              {["queued", "running", "paused", "completed"].map(
+              {(["queued", "running", "paused", "completed"] as JobDisplayStatus[]).map(
                 (stepStatus) => {
-                  const isActive =
+                  const isActiveStep =
                     status === stepStatus ||
                     (status === "failed" && stepStatus === "running");
                   return (
@@ -185,7 +195,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
                     >
                       <div
                         className={`flex items-center justify-center w-6 h-6 rounded-full border-4 border-slate-900 bg-slate-800 shrink-0 transition-colors duration-300
-                      ${isActive ? "border-slate-900 bg-slate-800 shadow-[0_0_10px_rgba(139,92,246,0.3)]" : ""}
+                      ${isActiveStep ? "border-slate-900 bg-slate-800 shadow-[0_0_10px_rgba(139,92,246,0.3)]" : ""}
                     `}
                       >
                         {stepStatus === "completed" && status === "failed" ? (
@@ -196,7 +206,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
                       </div>
                       <div
                         className={`flex-1 p-4 rounded-xl border transition-all duration-300
-                      ${isActive ? "bg-slate-800/80 border-slate-600 shadow-lg" : "bg-slate-900/50 border-slate-800/50"}
+                      ${isActiveStep ? "bg-slate-800/80 border-slate-600 shadow-lg" : "bg-slate-900/50 border-slate-800/50"}
                     `}
                       >
                         <div className="font-semibold text-slate-200 text-sm capitalize">

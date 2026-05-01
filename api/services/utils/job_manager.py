@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone
-from threading import Lock
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +13,15 @@ def _utc_now_iso() -> str:
 
 
 _JOB_STORE_DIR = Path(__file__).resolve().parents[3] / "tmp" / "job_store"
+
+
+def _derive_job_id(payload: dict[str, Any]) -> str:
+    """Derive a human-readable job ID from the payload."""
+    sourcefile = payload.get("sourcefile")
+    if sourcefile:
+        return Path(sourcefile).stem
+    return str(uuid4())
+
 
 class JobStore:
     _instance: "JobStore | None" = None
@@ -26,10 +35,8 @@ class JobStore:
         if getattr(self, "_initialized", False):
             return
 
-        # Shared in-memory state for queued/running/completed jobs.
         self._jobs: dict[str, JobState] = {}
-        self._cancel_flags: dict[str, bool] = {}  # Tracks which jobs should be cancelled
-        self._pause_flags: dict[str, bool] = {}
+        self._flags: dict[str, dict[str, bool]] = {}
         self._lock = Lock()
         self._initialized = True
         self._load_persisted_jobs()
@@ -51,9 +58,13 @@ class JobStore:
         for job_file in _JOB_STORE_DIR.glob("*.json"):
             try:
                 payload = json.loads(job_file.read_text(encoding="utf-8"))
+                # Normalize legacy statuses to the two-state model.
+                raw_status = payload.get("status", "paused")
+                if raw_status not in ("running", "paused"):
+                    raw_status = "paused"
                 job = JobState(
                     job_id=payload["job_id"],
-                    status=payload["status"],
+                    status=raw_status,
                     payload=payload.get("payload", {}),
                     result=payload.get("result"),
                     error=payload.get("error"),
@@ -69,15 +80,21 @@ class JobStore:
                 continue
 
     def create_job(self, payload: dict[str, Any]) -> JobState:
-        # Jobs start in queued state and are promoted by the async runner.
         with self._lock:
-            job_id = str(uuid4())
+            base_id = _derive_job_id(payload)
+            job_id = base_id
+            counter = 1
+            # Ensure uniqueness of job_id by appending a counter if needed.
+            while job_id in self._jobs:
+                job_id = f"{base_id}_{counter}"
+                counter += 1
+
             job = JobState(
                 job_id=job_id,
-                status="queued",
+                status="paused",
                 payload=payload,
                 created_at=_utc_now_iso(),
-                current_row=1,
+                current_row=0,
                 total_rows=0,
             )
             self._jobs[job_id] = job
@@ -94,99 +111,56 @@ class JobStore:
         jobs.sort(key=lambda job: job.created_at, reverse=True)
         return jobs
 
-    def update_status(
-        self,
-        job_id: str,
-        status: JobStatus,
-        *,
-        result: dict[str, Any] | None = None,
-        error: str | None = None,
-    ) -> JobState | None:
-        # Single transition utility used by the runner for all lifecycle updates.
+    def update(self, job_id: str, key: str, value: Any) -> JobState | None:
+        """Update a job by key. Supported keys: 'status', 'progress'."""
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
                 return None
 
-            job.status = status
-            if status == "running":
-                job.started_at = _utc_now_iso()
-                job.completed_at = None
-                # Preserve partial stats when resuming from a paused checkpoint.
-                if job.current_row <= 1:
-                    job.result = None
-                job.error = None
-                job.paused_at = None
-            elif status == "queued":
-                job.paused_at = None
-            elif status == "completed":
-                job.result = result
-                job.error = None
-                job.completed_at = _utc_now_iso()
-                job.paused_at = None
-            elif status == "failed":
-                job.error = error
-                job.completed_at = _utc_now_iso()
-                job.paused_at = None
-            elif status == "paused":
-                job.result = result if result is not None else job.result
-                job.error = error
-                job.paused_at = _utc_now_iso()
-                job.completed_at = None
+            if key == "status":
+                if value not in ("running", "paused"):
+                    raise ValueError("status must be 'running' or 'paused'")
+                job.status = value
+                if value == "running":
+                    job.started_at = _utc_now_iso()
+                    job.paused_at = None
+                    job.completed_at = None
+                elif value == "paused":
+                    job.paused_at = _utc_now_iso()
+            elif key == "progress":
+                if not isinstance(value, dict):
+                    raise ValueError("progress must be a dict")
+                if "current_row" in value:
+                    job.current_row = max(1, value["current_row"])
+                if "total_rows" in value:
+                    job.total_rows = max(0, value["total_rows"])
+                if "result" in value:
+                    job.result = value["result"]
+                if "error" in value:
+                    job.error = value["error"]
+                if "completed_at" in value:
+                    job.completed_at = value["completed_at"]
+            else:
+                raise ValueError(f"Unsupported update key: {key}")
+
             self._persist_job(job)
             return job
-
-    def update_progress(
-        self,
-        job_id: str,
-        *,
-        current_row: int | None = None,
-        total_rows: int | None = None,
-        result: dict[str, Any] | None = None,
-    ) -> JobState | None:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if job is None:
-                return None
-
-            if current_row is not None:
-                job.current_row = max(1, current_row)
-            if total_rows is not None:
-                job.total_rows = max(0, total_rows)
-            if result is not None:
-                job.result = result
-            self._persist_job(job)
-            return job
-
-    def mark_job_cancelled(self, job_id: str) -> None:
-        """Signal that a job should be cancelled (used during shutdown)."""
-        with self._lock:
-            self._cancel_flags[job_id] = True
 
     def request_job_pause(self, job_id: str) -> None:
         """Signal that a job should pause at the next checkpoint."""
         with self._lock:
-            self._pause_flags[job_id] = True
-
-    def is_job_cancelled(self, job_id: str) -> bool:
-        """Check if a job has been signalled for cancellation."""
-        with self._lock:
-            return self._cancel_flags.get(job_id, False)
+            self._flags[job_id] = {"pause_requested": True}
 
     def is_job_pause_requested(self, job_id: str) -> bool:
         """Check if a job should pause at the next checkpoint."""
         with self._lock:
-            return self._pause_flags.get(job_id, False)
-
-    def cleanup_cancel_flag(self, job_id: str) -> None:
-        """Remove cancellation flag when job completes (normal or cancelled)."""
-        with self._lock:
-            self._cancel_flags.pop(job_id, None)
+            return self._flags.get(job_id, {}).get("pause_requested", False)
 
     def cleanup_pause_flag(self, job_id: str) -> None:
         """Remove pause flag when a job resumes or reaches a terminal state."""
         with self._lock:
-            self._pause_flags.pop(job_id, None)
+            self._flags.pop(job_id, None)
 
     def delete_persisted_job(self, job_id: str) -> None:
         with self._lock:

@@ -6,7 +6,6 @@ from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import PlainTextResponse
 
 from api.models import CreateJobResponse, JobStatusResponse, SeedDatabaseRequest, UrlScrapeRequest
 from api.services.utils.job_manager import job_store
@@ -109,7 +108,7 @@ async def create_job(
     job_payload["csv_file_path"] = str(saved_path)
 
     job = job_store.create_job(job_payload)
-    await ws_manager.send_event(job.job_id, "queued", job.to_dict())
+    await ws_manager.send_event(job.job_id, "paused", job.to_dict())
     _schedule_seed_job(job.job_id)
 
     return CreateJobResponse(job_id=job.job_id, status=job.status)
@@ -126,7 +125,7 @@ async def create_url_job(payload: UrlScrapeRequest) -> CreateJobResponse:
     }
 
     job = job_store.create_job(job_payload)
-    await ws_manager.send_event(job.job_id, "queued", job.to_dict())
+    await ws_manager.send_event(job.job_id, "paused", job.to_dict())
     _schedule_seed_job(job.job_id)
 
     return CreateJobResponse(job_id=job.job_id, status=job.status)
@@ -139,7 +138,7 @@ async def pause_job(job_id: str) -> JobStatusResponse:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
     job_store.request_job_pause(job_id)
-    paused_job = job_store.update_status(job_id, "paused")
+    paused_job = job_store.update(job_id, "status", "paused")
     if paused_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -156,13 +155,13 @@ async def resume_job(job_id: str) -> JobStatusResponse:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only paused jobs can be resumed")
 
     job_store.cleanup_pause_flag(job_id)
-    queued_job = job_store.update_status(job_id, "queued")
-    if queued_job is None:
+    running_job = job_store.update(job_id, "status", "running")
+    if running_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    await ws_manager.send_event(job_id, "queued", queued_job.to_dict())
+    await ws_manager.send_event(job_id, "started", running_job.to_dict())
     _schedule_seed_job(job_id)
-    return JobStatusResponse(**queued_job.to_dict())
+    return JobStatusResponse(**running_job.to_dict())
 
 
 @router.post("/jobs/{job_id}/stop", response_model=JobStatusResponse)
@@ -171,10 +170,9 @@ async def stop_job(job_id: str) -> JobStatusResponse:
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    job_store.mark_job_cancelled(job_id)
-    
-    # Update status to paused (stopped)
-    stopped_job = job_store.update_status(job_id, "paused", error="Job stopped by user")
+    job_store.request_job_pause(job_id)
+    job_store.update(job_id, "progress", {"error": "Job stopped by user"})
+    stopped_job = job_store.update(job_id, "status", "paused")
     if stopped_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -273,14 +271,4 @@ async def get_job(job_id: str) -> JobStatusResponse:
     return JobStatusResponse(**job.to_dict())
 
 
-@router.get("/jobs/{job_id}/logs", response_class=PlainTextResponse)
-async def get_job_logs(job_id: str) -> PlainTextResponse:
-    job = job_store.get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    logs = job_store.get_job_logs(job_id)
-    if not logs:
-        return PlainTextResponse("No logs captured for this job yet.")
-
-    return PlainTextResponse("\n".join(logs))

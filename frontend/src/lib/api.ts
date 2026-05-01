@@ -146,12 +146,3 @@ export async function fetchJobs(): Promise<JobSnapshot[]> {
   return response.json();
 }
 
-export async function fetchJobLogs(jobId: string): Promise<string> {
-  const response = await fetch(`${BASE_URL}/jobs/${jobId}/logs`);
-
-  if (!response.ok) {
-    throw new Error("Failed to fetch job logs");
-  }
-
-  return response.text();
-}

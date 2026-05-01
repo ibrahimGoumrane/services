@@ -11,9 +11,10 @@ import pandas as pd
 
 from api.services.utils.job_manager import job_store
 
+from api.models import CsvMapping
 from .models import ProcessingConfig
 from .utils import contact_repository, data_transformers, email_classifiers, mx_resolver
-from .utils.logging_config import flush_buffered_log_handlers, get_logger, setup_logging
+from api.services.utils.logging_config import flush_buffered_log_handlers, get_logger, setup_logging
 from .utils.tld_country_mapper import get_country_from_email_domain
 from .utils.url_utils import extract_domain
 from .utils.website_validator import WebsiteEmailValidator
@@ -218,7 +219,7 @@ def _company_contact_to_tuple(c: CompanyContactData) -> Tuple:
 
 def _extract_csv_row(
     row: Any,
-    csv_mapping: Dict[str, str],
+    csv_mapping: CsvMapping,
     default_values: Dict[str, Any],
     sourcefile: Optional[str],
 ) -> CsvRow:
@@ -242,7 +243,6 @@ def _extract_csv_row(
 
     activite = (
         str(_get("activite", "") or "")
-        or str(_get("activité", "") or "")
         or str(_get("secteur", "") or "")
     )
 
@@ -724,7 +724,7 @@ def _process_contact_row(
     generic_mx: Set[str],
     site_builder_domains: Set[str],
     sourcefile: Optional[str],
-    csv_mapping: Dict[str, str],
+    csv_mapping: CsvMapping,
     default_values: Dict[str, Any],
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]],
     new_mx_records: List[Tuple[str, str, str]],
@@ -992,13 +992,9 @@ def process_database_seeding(
             if row_number < start_row:
                 continue
 
-            if job_id and job_store.is_job_cancelled(job_id):
-                logger.info(f"Job {job_id} received shutdown signal, stopping gracefully...")
-                break
-
             if job_id and job_store.is_job_pause_requested(job_id):
                 logger.info(f"Job {job_id} pause requested, stopping at checkpoint row {row_number}")
-                job_store.update_status(job_id, "paused")
+                job_store.update(job_id, "status", "paused")
                 raise JobInterruptionRequested("pause")
 
             stats["processed"] += 1
@@ -1063,9 +1059,9 @@ def process_database_seeding(
                     )
                     if job_id:
                         next_checkpoint_row = min(row_number + 1, stats["total_rows"])
-                        job_store.update_progress(
-                            job_id, current_row=next_checkpoint_row,
-                            total_rows=stats["total_rows"], result=stats,
+                        job_store.update(
+                            job_id, "progress",
+                            {"current_row": next_checkpoint_row, "total_rows": stats["total_rows"], "result": stats},
                         )
 
                     batches_processed += 1
@@ -1116,12 +1112,11 @@ def process_database_seeding(
             except JobInterruptionRequested as exc:
                 if not job_id:
                     raise
-                if str(exc) == "cancelled" or job_store.is_job_cancelled(job_id):
+                if str(exc) == "cancelled":
                     logger.info(f"Job {job_id} cancellation acknowledged during row {row_number}")
                     break
                 logger.info(f"Job {job_id} pause acknowledged during row {row_number}")
-                # close 
-                job_store.update_status(job_id, "paused")
+                job_store.update(job_id, "status", "paused")
                 flush_buffered_log_handlers(logger)
                 return stats
             except Exception as exc:
@@ -1130,8 +1125,6 @@ def process_database_seeding(
                 continue
 
     finally:
-        if job_id:
-            job_store.cleanup_cancel_flag(job_id)
         if validator:
             logger.info("Closing NoDriver browser...")
             validator.quit()
@@ -1153,14 +1146,14 @@ def process_database_seeding(
     if job_id:
         _final_job = job_store.get_job(job_id)
         if _final_job and _final_job.status == "paused":
-            job_store.update_progress(
-                job_id, current_row=stats["processed"] + 1,
-                total_rows=stats["total_rows"], result=stats,
+            job_store.update(
+                job_id, "progress",
+                {"current_row": stats["processed"] + 1, "total_rows": stats["total_rows"], "result": stats},
             )
         elif stats["processed"] >= stats["total_rows"]:
-            job_store.update_progress(
-                job_id, current_row=stats["total_rows"],
-                total_rows=stats["total_rows"], result=stats,
+            job_store.update(
+                job_id, "progress",
+                {"current_row": stats["total_rows"], "total_rows": stats["total_rows"], "result": stats},
             )
 
     flush_buffered_log_handlers(logger)
@@ -1224,7 +1217,7 @@ def process_single_url_seeding(
             generic_mx=generic_mx,
             site_builder_domains=site_builder_domains,
             sourcefile=sourcefile or (url or "single-url"),
-            csv_mapping={"url": "url"},
+            csv_mapping=CsvMapping(url="url"),
             default_values={},
             mx_cache={},
             new_mx_records=[],

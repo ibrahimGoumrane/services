@@ -1,46 +1,27 @@
 import { useEffect, useRef } from "react";
 import { fetchJobStatus } from "../lib/api";
-import { JobMetrics, JobStatus, JobSnapshot } from "../lib/types";
-
-function toMetrics(snapshot: JobSnapshot): JobMetrics {
-  const result = snapshot.result;
-  return {
-    processed: Number(result?.processed ?? 0),
-    inserted: Number(result?.inserted ?? 0),
-    updated: Number(result?.updated ?? 0),
-    errors: Array.isArray(result?.errors) ? result.errors.length : 0,
-    synthetic_emails_created: Number(result?.synthetic_emails_created ?? 0),
-  };
-}
+import { JobSnapshot } from "../lib/types";
 
 export function useJobPolling(
   jobId: string | null,
-  currentStatus: JobStatus | null,
+  currentStatus: string | null,
   isWsConnected: boolean,
-  onStatusUpdate: (
-    status: JobStatus,
-    metrics?: JobMetrics,
-    error?: string,
-  ) => void,
+  onSnapshotUpdate: (snapshot: JobSnapshot) => void,
 ) {
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
 
   useEffect(() => {
-    // Only poll if we have a job, WS is disconnected, and we aren't in a terminal state
+    // Only poll while the job is running and WS is disconnected.
     const shouldPoll =
-      jobId &&
-      !isWsConnected &&
-      currentStatus !== "completed" &&
-      currentStatus !== "paused" &&
-      currentStatus !== "failed";
+      jobId && !isWsConnected && currentStatus !== "paused";
 
     if (shouldPoll) {
       pollingIntervalRef.current = setInterval(async () => {
         try {
           const data = await fetchJobStatus(jobId);
-          onStatusUpdate(data.status, toMetrics(data), data.error ?? undefined);
+          onSnapshotUpdate(data);
         } catch (err) {
           console.error("Polling failed", err);
         }
@@ -52,5 +33,5 @@ export function useJobPolling(
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [jobId, currentStatus, isWsConnected, onStatusUpdate]);
+  }, [jobId, currentStatus, isWsConnected, onSnapshotUpdate]);
 }

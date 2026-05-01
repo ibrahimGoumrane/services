@@ -2,9 +2,9 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-JobStatus = Literal["queued", "running", "paused", "completed", "failed"]
+JobStatus = Literal["running", "paused"]
 
 
 @dataclass
@@ -37,36 +37,72 @@ class JobState:
         }
 
 
+class CsvMapping(BaseModel):
+    """Mapping from CSV column names to database field names."""
+
+    fullname: str | None = None
+    fname: str | None = None
+    lname: str | None = None
+    name: str | None = None
+    email: str | None = None
+    url: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    fax: str | None = None
+    linkedin: str | None = None
+    position: str | None = None
+    address: str | None = None
+    city: str | None = None
+    zip: str | None = None
+    country: str | None = None
+    location: str | None = None
+    urlcontactform: str | None = None
+    image: str | None = None
+    sourcefile: str | None = None
+    ca: str | None = None
+    activite: str | None = None
+    secteur: str | None = None
+
+    @property
+    def has_mappings(self) -> bool:
+        """Check if at least one mapping field is provided."""
+        return any(getattr(self, f) for f in self.__class__.model_fields)
+
+    def get(self, field: str, default: Any = None) -> Any:
+        """Get the value of a mapping field, returning default if not set."""
+        return getattr(self, field, default)
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_values(cls, data: Any) -> Any:
+        """Strip whitespace from all string values in the input data."""
+        if isinstance(data, dict):
+            cleaned: dict[str, Any] = {}
+            for k, v in data.items():
+                if isinstance(v, str):
+                    v = v.strip()
+                    if v == "":
+                        v = None
+                cleaned[k] = v
+            return cleaned
+        return data
+
+    @model_validator(mode="after")
+    def validate_identity_fields(self) -> "CsvMapping":
+        """Ensure that at least one of fullname, name, or email is provided."""
+        if not any([self.fullname, self.name, self.email]):
+            raise ValueError("csv_mapping must include at least one of: fullname, name, email")
+        return self
+
+
 class SeedDatabaseRequest(BaseModel):
-    csv_mapping: dict[str, str]
+    csv_mapping: CsvMapping
     csv_separator: str = ","
     batch_size: int = Field(default=5, ge=1)
     enable_web_scraping: bool = True
     skip_google_search: bool = False
     default_values: dict[str, Any] | None = None
     sourcefile: str | None = None
-
-    @field_validator("csv_mapping")
-    @classmethod
-    def validate_mapping(cls, value: dict[str, str]) -> dict[str, str]:
-        if not value:
-            raise ValueError("csv_mapping cannot be empty")
-
-        normalized_mapping = {
-            str(key).strip().lower(): str(mapped_value).strip()
-            for key, mapped_value in value.items()
-            if str(mapped_value).strip()
-        }
-
-        # At least one primary identity field is required.
-        required_fields = ["fullname", "name", "email"]
-        has_at_least_one = any(field in normalized_mapping for field in required_fields)
-        if not has_at_least_one:
-            raise ValueError(
-                f"csv_mapping must include at least one of: {', '.join(required_fields)}"
-            )
-
-        return normalized_mapping
 
 
 class UrlScrapeRequest(BaseModel):

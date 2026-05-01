@@ -1,25 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  JobStatus,
+  JobDisplayStatus,
   LogEntry,
   WSEvent,
   JobMetrics,
   JobResult,
+  JobSnapshot,
   WSLogStreamData,
   WSProgressStreamData,
+  deriveDisplayStatus,
 } from "../lib/types";
 
 const WS_BASE_URL = "ws://127.0.0.1:8000";
-
-function isJobStatus(value: unknown): value is JobStatus {
-  return (
-    value === "queued" ||
-    value === "running" ||
-    value === "paused" ||
-    value === "completed" ||
-    value === "failed"
-  );
-}
 
 function toLogEntry(data: Record<string, unknown>): LogEntry | null {
   const rawLevel =
@@ -133,8 +125,28 @@ function mergeMetricsFromLog(previous: JobMetrics, log: LogEntry): JobMetrics {
   return next;
 }
 
+function toSnapshot(data: Record<string, unknown>): JobSnapshot {
+  return {
+    job_id: String(data.job_id ?? ""),
+    status: data.status === "running" ? "running" : "paused",
+    payload: (data.payload as Record<string, unknown>) ?? {},
+    result: data.result as JobResult | null | undefined,
+    error: data.error as string | null | undefined,
+    created_at: String(data.created_at ?? ""),
+    started_at: data.started_at as string | null | undefined,
+    paused_at: data.paused_at as string | null | undefined,
+    completed_at: data.completed_at as string | null | undefined,
+    current_row:
+      typeof data.current_row === "number" ? data.current_row : undefined,
+    total_rows:
+      typeof data.total_rows === "number" ? data.total_rows : undefined,
+  };
+}
+
 export function useWebSocket(jobId: string | null) {
-  const [status, setStatus] = useState<JobStatus | null>(null);
+  const [displayStatus, setDisplayStatus] = useState<JobDisplayStatus | null>(
+    null,
+  );
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [metrics, setMetrics] = useState<JobMetrics>({
     processed: 0,
@@ -169,22 +181,20 @@ export function useWebSocket(jobId: string | null) {
 
         switch (payload.type) {
           case "snapshot":
-            if (isJobStatus(data.status)) {
-              setStatus(data.status);
-            }
-            if (data.result && typeof data.result === "object") {
-              setMetrics(toMetricsFromResult(data.result as JobResult));
-            }
-            break;
-          case "queued":
-            setStatus("queued");
-            break;
           case "started":
-            setStatus("running");
-            break;
           case "paused":
-            setStatus("paused");
+          case "completed":
+          case "failed": {
+            const snapshot = toSnapshot(data);
+            setDisplayStatus(deriveDisplayStatus(snapshot));
+            if (snapshot.error) {
+              setError(snapshot.error);
+            }
+            if (snapshot.result && typeof snapshot.result === "object") {
+              setMetrics(toMetricsFromResult(snapshot.result));
+            }
             break;
+          }
           case "stream":
             if (isLogStreamData(data)) {
               const logEntry = toLogEntry({
@@ -213,20 +223,6 @@ export function useWebSocket(jobId: string | null) {
               }));
             }
             break;
-          case "completed":
-            setStatus("completed");
-            if (data.result && typeof data.result === "object") {
-              setMetrics(toMetricsFromResult(data.result as JobResult));
-            }
-            break;
-          case "failed":
-            setStatus("failed");
-            setError(
-              typeof data.error === "string" && data.error
-                ? data.error
-                : "Job failed unexpectedly",
-            );
-            break;
         }
       } catch (err) {
         console.error("Failed to parse WS message", err);
@@ -237,9 +233,9 @@ export function useWebSocket(jobId: string | null) {
       setIsConnected(false);
       // Auto-reconnect if not in a terminal state
       if (
-        status !== "completed" &&
-        status !== "failed" &&
-        status !== "paused"
+        displayStatus !== "completed" &&
+        displayStatus !== "failed" &&
+        displayStatus !== "paused"
       ) {
         reconnectTimeoutRef.current = setTimeout(connect, 3000);
       }
@@ -248,7 +244,7 @@ export function useWebSocket(jobId: string | null) {
     ws.onerror = () => {
       // Error handling is mostly managed by onclose reconnects
     };
-  }, [jobId, status]);
+  }, [jobId, displayStatus]);
 
   useEffect(() => {
     connect();
@@ -260,5 +256,5 @@ export function useWebSocket(jobId: string | null) {
     };
   }, [connect]);
 
-  return { status, logs, metrics, error, isConnected };
+  return { status: displayStatus, logs, metrics, error, isConnected };
 }

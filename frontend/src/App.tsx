@@ -12,6 +12,7 @@ import {
   JobSnapshot,
   LogEntry,
   UrlScrapeResult,
+  deriveDisplayStatus,
 } from "./lib/types";
 import { Database, AlertCircle, ListChecks } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -75,8 +76,9 @@ export function App() {
       (job.result?.url_result as UrlScrapeResult | null) ?? null,
     );
 
-    if (job.status === "completed" || job.status === "failed") {
-      setFinalStatus(job.status);
+    const displayStatus = deriveDisplayStatus(job);
+    if (displayStatus === "completed" || displayStatus === "failed") {
+      setFinalStatus(displayStatus);
       setFinalMetrics(toMetrics(job));
       setFinalLogs([]);
       setFinalError(job.error ?? undefined);
@@ -91,11 +93,10 @@ export function App() {
 
   const trackedJobs = useMemo(
     () =>
-      jobs.filter((job) =>
-        ["queued", "running", "paused", "completed", "failed"].includes(
-          job.status,
-        ),
-      ),
+      jobs.filter((job) => {
+        const display = deriveDisplayStatus(job);
+        return ["queued", "running", "paused", "completed", "failed"].includes(display);
+      }),
     [jobs],
   );
 
@@ -275,34 +276,37 @@ export function App() {
               </div>
 
               <div className="grid gap-2 sm:grid-cols-2">
-                {trackedJobs.map((job) => (
-                  <button
-                    key={job.job_id}
-                    type="button"
-                    onClick={() => recoverJob(job)}
-                    className="rounded-xl border border-slate-700/70 bg-slate-950/60 px-3 py-2 text-left transition hover:border-slate-600 hover:bg-slate-900"
-                  >
-                    <div className="text-xs font-mono text-slate-400">
-                      {job.job_id}
-                    </div>
-                    <div className="mt-1 flex items-center justify-between">
-                      <span className="text-sm font-medium text-slate-200 capitalize">
-                        {job.status}
-                      </span>
-                      <span className="text-xs text-slate-500">
-                        {job.created_at
-                          ? new Date(job.created_at).toLocaleTimeString()
-                          : ""}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {typeof job.current_row === "number" &&
-                      typeof job.total_rows === "number"
-                        ? `Row ${Math.max(1, job.current_row)} / ${Math.max(0, job.total_rows)}`
-                        : "Progress unavailable"}
-                    </div>
-                  </button>
-                ))}
+                {trackedJobs.map((job) => {
+                  const displayStatus = deriveDisplayStatus(job);
+                  return (
+                    <button
+                      key={job.job_id}
+                      type="button"
+                      onClick={() => recoverJob(job)}
+                      className="rounded-xl border border-slate-700/70 bg-slate-950/60 px-3 py-2 text-left transition hover:border-slate-600 hover:bg-slate-900"
+                    >
+                      <div className="text-xs font-mono text-slate-400">
+                        {job.job_id}
+                      </div>
+                      <div className="mt-1 flex items-center justify-between">
+                        <span className="text-sm font-medium text-slate-200 capitalize">
+                          {displayStatus}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {job.created_at
+                            ? new Date(job.created_at).toLocaleTimeString()
+                            : ""}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {typeof job.current_row === "number" &&
+                        typeof job.total_rows === "number"
+                          ? `Row ${Math.max(1, job.current_row)} / ${Math.max(0, job.total_rows)}`
+                          : "Progress unavailable"}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </motion.div>
           )}

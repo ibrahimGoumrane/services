@@ -13,7 +13,7 @@ from .driver import NoDriverDriver
 from .geo_extractor import extract_location_city_country
 from .url_utils import normalize_url, validate_website_http
 from .email_extractors import extract_emails_from_text
-from .logging_config import get_logger
+from api.services.utils.logging_config import get_logger
 
 
 logger = get_logger("dbSeeder.web_scraper")

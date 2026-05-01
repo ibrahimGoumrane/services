@@ -7,7 +7,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { JobMetrics, LogEntry, UrlScrapeResult } from "../lib/types";
-import { fetchJobLogs } from "../lib/api";
 interface CompletionStepProps {
   status: "completed" | "failed";
   jobId: string | null;
@@ -72,7 +71,7 @@ export function CompletionStep({
     URL.revokeObjectURL(objectUrl);
   };
 
-  const handleExportLogs = async () => {
+  const handleExportLogs = () => {
     if (logs.length > 0) {
       const lines = logs.map((entry) => {
         const ts = new Date(entry.timestamp || Date.now()).toISOString();
@@ -82,44 +81,19 @@ export function CompletionStep({
       return;
     }
 
-    try {
-      if (!jobId) {
-        downloadText(
-          [
-            `Status: ${status}`,
-            `Processed: ${metrics.processed}`,
-            `Inserted: ${metrics.inserted}`,
-            `Updated: ${metrics.updated}`,
-            `Errors: ${metrics.errors}`,
-            `Synthetic Emails: ${metrics.synthetic_emails_created}`,
-            error ? `Error: ${error}` : "",
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        );
-        return;
-      }
-
-      const logsContent = await fetchJobLogs(jobId);
-      downloadText(logsContent);
-    } catch (downloadError) {
-      console.error("Failed to export logs", downloadError);
-      downloadText(
-        [
-          `Status: ${status}`,
-          `Processed: ${metrics.processed}`,
-          `Inserted: ${metrics.inserted}`,
-          `Updated: ${metrics.updated}`,
-          `Errors: ${metrics.errors}`,
-          `Synthetic Emails: ${metrics.synthetic_emails_created}`,
-          error ? `Error: ${error}` : "",
-          "",
-          "Detailed logs were not available from the API endpoint.",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      );
-    }
+    downloadText(
+      [
+        `Status: ${status}`,
+        `Processed: ${metrics.processed}`,
+        `Inserted: ${metrics.inserted}`,
+        `Updated: ${metrics.updated}`,
+        `Errors: ${metrics.errors}`,
+        `Synthetic Emails: ${metrics.synthetic_emails_created}`,
+        error ? `Error: ${error}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
   };
   return (
     <motion.div
