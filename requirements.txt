@@ -12,3 +12,6 @@ beautifulsoup4
 nodriver
 mysqlx
 python-dotenv
+nltk
+spacy
+locationtagger
