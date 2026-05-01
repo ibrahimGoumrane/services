@@ -47,7 +47,6 @@ def _extract_with_locationtagger(
 
 
 def extract_location_city_country(
-    page_url: str,
     html: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
@@ -55,7 +54,6 @@ def extract_location_city_country(
 
     """
     if not html or not html.strip():
-        logger.debug(f"No HTML provided for {page_url}; skipping extraction")
         return None, None, None
 
     address, country, city = _extract_with_locationtagger(text=html.strip())
