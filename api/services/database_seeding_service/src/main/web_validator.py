@@ -1,6 +1,7 @@
-"""High-level website and email validation orchestrator"""
+"""High-level orchestrator that exposes scraper, searcher, and email validator."""
 
-from typing import List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 from ..utils.email_validators import EmailValidator
 from api.services.utils.logging_config import get_logger
@@ -13,13 +14,12 @@ logger = get_logger("dbSeeder.web_validator")
 
 class WebsiteEmailValidator:
     """
-    Main orchestrator for website validation and email extraction.
+    Session-scoped dependency container.
 
-    Composes multiple utilities:
-    - NoDriverDriver: Browser management
-    - PageScraper: Page scraping and email finding
-    - GoogleSearcher: Google search for websites
-    - EmailValidator: Email filtering
+    Owns the browser lifecycle and exposes:
+    - ``scraper``  – page scraping + contact extraction
+    - ``searcher`` – Google SERP automation
+    - ``email_validator`` – e-mail filtering
     """
 
     def __init__(
@@ -27,28 +27,27 @@ class WebsiteEmailValidator:
         skip_website_search: bool = False,
         site_timeout_seconds: int = 30,
     ):
-        """
-        Initialize website email validator.
-
-        Args:
-            skip_website_search: Skip Google search for missing websites
-        """
         self.skip_website_search = skip_website_search
         self.site_timeout_seconds = site_timeout_seconds
 
         self.driver: Optional[NoDriverDriver] = None
         self.scraper: Optional[PageScraper] = None
         self.searcher: Optional[GoogleSearcher] = None
-        self.email_validator: Optional[EmailValidator] = None
 
-        # Load filter lists
-        self.generic_domains = set()
-        self.generic_users = set()
-        self.not_visiting_domains = set()
-        self.site_builder_domains = set()
+        # Filter sets – mutated at runtime via update_reference_filters()
+        self.generic_domains: Set[str] = set()
+        self.generic_users: Set[str] = set()
+        self.site_builder_domains: Set[str] = set()
+        self.not_visiting_domains: Set[str] = set()
+
+        # Created eagerly so update_reference_filters() can mutate it even
+        # before setup_driver() is called.
+        self.email_validator = EmailValidator()
+
+    # ── Lifecycle ──────────────────────────────────────────────────────────
 
     def setup_driver(self) -> None:
-        """Initialize NoDriver browser"""
+        """Launch the browser and wire up scraper + searcher."""
         self.driver = NoDriverDriver()
         self.driver.setup()
 
@@ -66,45 +65,102 @@ class WebsiteEmailValidator:
 
     def update_reference_filters(
         self,
-        generic_domains: set[str],
-        generic_users: set[str],
-        site_builder_domains: set[str],
-        not_visiting_domains: set[str],
+        generic_domains: Set[str],
+        generic_users: Set[str],
+        site_builder_domains: Set[str],
+        not_visiting_domains: Set[str],
     ) -> None:
-        """Refresh runtime filter sets without recreating browser session."""
+        """Refresh runtime filter sets without recreating the browser session."""
         self.generic_domains = set(generic_domains)
         self.generic_users = set(generic_users)
         self.site_builder_domains = set(site_builder_domains)
         self.not_visiting_domains = set(not_visiting_domains)
 
+        # Propagate to searcher
         if self.searcher:
             self.searcher.excluded_domains = list(self.not_visiting_domains)
             self.searcher.generic_domains = list(self.generic_domains)
 
+        # Propagate to scraper
         if self.scraper:
             self.scraper.excluded_domains = list(self.not_visiting_domains)
 
-        self.email_validator = EmailValidator(
-            generic_domains=list(self.generic_domains),
-            generic_users=list(self.generic_users),
-            site_builder_domains=list(self.site_builder_domains),
-            excluded_domains=list(self.not_visiting_domains),
-        )
+        # Mutate email_validator in-place (avoids recreating the object)
+        self.email_validator.generic_domains = self.generic_domains
+        self.email_validator.generic_users = self.generic_users
+        self.email_validator.site_builder_domains = self.site_builder_domains
+        self.email_validator.excluded_domains = self.not_visiting_domains
+
+    # ── Conveniences ───────────────────────────────────────────────────────
 
     def validate_website(self, url: str) -> bool:
+        """Check whether *url* is reachable and not on the exclusion list."""
+        return validate_website_http(
+            url, excluded_domains=list(self.not_visiting_domains)
+        )
+
+    def search_google(
+        self,
+        query: str,
+        looking_for: Literal["website", "linkedin_profile", "linkedin_company"] = "website",
+    ) -> Tuple[List[str], Optional[Dict[str, str]]]:
         """
-        Check if a website is accessible via HTTP.
+        Run a Google search and return URLs filtered by *looking_for*.
 
         Args:
-            url: Website URL
+            query: Raw search query (e.g. business name, person name).
+            looking_for:
+                - ``"website"``            – general web search, URLs are HTTP-validated
+                - ``"linkedin_profile"``   – appends ``site:linkedin.com/in``,
+                  skips HTTP validation (LinkedIn blocks bots), returns only
+                  ``/in/`` URLs
+                - ``"linkedin_company"``  – appends ``site:linkedin.com/company``,
+                  skips HTTP validation, returns only ``/company/`` URLs
 
         Returns:
-            True if website is accessible, False otherwise
+            (urls, local_panel) – same shape as ``GoogleSearcher.search``.
         """
-        return validate_website_http(
-            url,
-            excluded_domains=list(self.not_visiting_domains),
-        )
+        if not self.searcher:
+            logger.error("Searcher not initialized. Call setup_driver() first.")
+            return [], None
+
+        if looking_for == "linkedin_profile":
+            full_query = f"{query} site:linkedin.com/in"
+            urls, panel = self.searcher.search(full_query, validate_urls=False)
+            filtered = [
+                url for url in urls
+                if self._is_linkedin_url(url, "/in/")
+            ]
+            logger.info(f"LinkedIn profile search returned {len(filtered)} match(es)")
+            return filtered, panel
+
+        if looking_for == "linkedin_company":
+            full_query = f"{query} site:linkedin.com/company"
+            urls, panel = self.searcher.search(full_query, validate_urls=False)
+            filtered = [
+                url for url in urls
+                if self._is_linkedin_url(url, "/company/")
+            ]
+            logger.info(f"LinkedIn company search returned {len(filtered)} match(es)")
+            return filtered, panel
+
+        # Default: general website search
+        return self.searcher.search(query, validate_urls=True)
+
+    @staticmethod
+    def _is_linkedin_url(url: str, path_prefix: str) -> bool:
+        """Return True if *url* is a linkedin.com URL starting with *path_prefix*."""
+        try:
+            parsed = urlparse(url)
+            host = (parsed.netloc or "").lower()
+            if host.startswith("www."):
+                host = host[4:]
+            path = (parsed.path or "").lower()
+            return (
+                host == "linkedin.com" or host.endswith(".linkedin.com")
+            ) and path.startswith(path_prefix)
+        except Exception:
+            return False
 
     def find_contact_info_on_website(
         self,
@@ -112,35 +168,35 @@ class WebsiteEmailValidator:
     ) -> Tuple[
         List[str], List[str], Optional[str], Optional[str], Optional[str], Optional[str]
     ]:
-        """Find emails, phones, contact page, and geo hints in one scraper call."""
+        """Scrape *website_url* for emails, phones, contact page, and geo hints."""
         if not self.scraper:
             logger.error("Scraper not initialized. Call setup_driver() first.")
             return [], [], None, None, None, None
 
         logger.info(
-            f"[validator] find_contact_info_on_website start website_url={website_url}"
+            f"[validator] find_contact_info_on_website start url={website_url}"
         )
         result = self.scraper.find_contact_info_on_website(website_url)
         logger.info(
-            f"[validator] find_contact_info_on_website done website_url={website_url} "
+            f"[validator] find_contact_info_on_website done url={website_url} "
             f"emails={len(result[0])} phones={len(result[1])} contact_page={result[2]!r} "
             f"location={result[3]!r} city={result[4]!r} country={result[5]!r}"
         )
         return result
 
-
-
     def prepare_next_batch(self) -> None:
         """Close popup tabs and create a clean tab for the next batch cycle."""
-        if self.driver:
-            try:
-                self.driver.cleanup_tabs_for_next_batch()
-                logger.debug("prepare_next_batch succeeded")
-            except Exception as exc:
-                logger.debug(f"prepare_next_batch failed: {exc}")
-                raise
+        if not self.driver:
+            return
+        try:
+            self.driver.cleanup_tabs_for_next_batch()
+            logger.debug("prepare_next_batch succeeded")
+        except Exception as exc:
+            logger.debug(f"prepare_next_batch failed: {exc}")
+            raise
 
     def restart_browser(self, reason: str = "manual") -> None:
+        """Restart the underlying browser."""
         if not self.driver:
             return
         try:
@@ -151,6 +207,6 @@ class WebsiteEmailValidator:
             raise
 
     def quit(self) -> None:
-        """Close WebDriver and cleanup"""
+        """Close the browser and release resources."""
         if self.driver:
             self.driver.quit()

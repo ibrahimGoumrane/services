@@ -12,7 +12,12 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REGIONS = os.getenv("PHONE_EXTRACTION_REGIONS", "US").split(",")  # e.g. "US,CA,GB"
+_FALLBACK_REGIONS = "US,GB,FR,DE,CA,AU,NL,BE,CH"
+DEFAULT_REGIONS = [
+    r.strip()
+    for r in os.getenv("PHONE_EXTRACTION_REGIONS", _FALLBACK_REGIONS).split(",")
+    if r.strip()
+]
 
 
 def _visible_text(html: str) -> str:
