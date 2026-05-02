@@ -270,21 +270,14 @@ def _scrape_website(url: str, validator: WebsiteEmailValidator) -> ScrapedWebDat
     """Scrape *url* and return raw contact data."""
     logger.info(f"Scraping website for contact data: '{url}'")
     try:
-        emails, phones, contact_page, location, city, country = (
-            validator.find_contact_info_on_website(url)
-        )
+        scraped = validator.find_contact_info_on_website(url)
         logger.info(
-            f"Scraping done: emails={len(emails)} phones={len(phones)} "
-            f"contact_page={contact_page!r} city={city!r} country={country!r}"
+            f"Scraping done: emails={len(scraped.emails)} phones={len(scraped.phones)} "
+            f"contact_page={scraped.contact_page!r} city={scraped.city!r} "
+            f"country={scraped.country!r} zip_code={scraped.zip_code!r} "
+            f"socials={list(scraped.social_links.keys())}"
         )
-        return ScrapedWebData(
-            emails=emails or [],
-            phones=phones or [],
-            contact_page=contact_page,
-            location=location,
-            city=city,
-            country=country,
-        )
+        return scraped
     except Exception as exc:
         logger.warning(f"Web enrichment error for '{url}': {exc}")
         return ScrapedWebData()

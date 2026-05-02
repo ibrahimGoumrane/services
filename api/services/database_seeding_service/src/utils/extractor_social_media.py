@@ -108,7 +108,7 @@ def extract_social_links(html: Optional[str]) -> Dict[str, List[str]]:
     # ------------------------------------------------------------------
     # 1. Raw HTML scan
     # ------------------------------------------------------------------
-    found = _scan_text(html)
+    result = _scan_text(html)
 
     # ------------------------------------------------------------------
     # 2. Parsed-attribute scan (BeautifulSoup)
@@ -122,17 +122,8 @@ def extract_social_links(html: Optional[str]) -> Dict[str, List[str]]:
                     continue
                 partial = _scan_text(value)
                 for platform, urls in partial.items():
-                    found[platform].update(urls)
+                    result[platform].update(urls)
     except Exception as exc:
         logger.warning(f"BeautifulSoup parsing failed during social extraction: {exc}")
 
-    # ------------------------------------------------------------------
-    # 3. Deduplicate case-insensitively, preserve first-seen casing
-    # ------------------------------------------------------------------
-    
-    result: Dict[str, List[str]] = {
-        platform: list(urls)
-        for platform, urls in found.items()
-        if urls  # skip empty sets
-    }
     return result

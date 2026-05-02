@@ -3,10 +3,12 @@
 from typing import Dict, List, Literal, Optional, Set, Tuple
 from urllib.parse import urlparse
 
+from ..models import ScrapedWebData
 from ..utils.email_validators import EmailValidator
 from ..utils.extractor_email import extract_emails_from_text
 from ..utils.extractor_geo import extract_location_city_country
 from ..utils.extractor_phone import extract_phones_from_text
+from ..utils.extractor_social_media import extract_social_links
 from ..utils.url_utils import normalize_url, validate_website_http
 from api.services.utils.logging_config import get_logger
 from .web_scraper import NoDriverDriver, PageScraper, _dedupe, extract_contact_links
@@ -168,19 +170,19 @@ class WebsiteEmailValidator:
     def find_contact_info_on_website(
         self,
         website_url: str,
-    ) -> Tuple[
-        List[str], List[str], Optional[str], Optional[str], Optional[str], Optional[str]
-    ]:
+    ) -> ScrapedWebData:
         """
-        Scrape *website_url* for emails, phones, contact page, and geo hints.
+        Scrape *website_url* for emails, phones, contact page, geo hints,
+        and social-media links.
         Orchestrates homepage fetch → extraction → optional contact-page crawl.
         """
+        empty = ScrapedWebData()
         if not self.scraper:
             logger.error("Scraper not initialized. Call setup_driver() first.")
-            return [], [], None, None, None, None
+            return empty
 
         if not website_url:
-            return [], [], None, None, None, None
+            return empty
 
         website_url = normalize_url(website_url)
         logger.info(f"[validator] find_contact_info_on_website start url={website_url}")
@@ -193,19 +195,24 @@ class WebsiteEmailValidator:
                     f"[validator] find_contact_info_on_website done url={website_url} "
                     f"(empty homepage)"
                 )
-                return [], [], None, None, None, None
+                return empty
 
             all_emails = extract_emails_from_text(homepage_html)
             all_phones = extract_phones_from_text(homepage_html)
-            location, city, country = extract_location_city_country(homepage_html)
+            location, city, country, zip_code = extract_location_city_country(
+                homepage_html
+            )
+            all_social_links = extract_social_links(homepage_html)
             contact_candidates = extract_contact_links(
                 website_url, homepage_html, url_ok=self.scraper._http_ok
             )
             contact_page = contact_candidates[0] if contact_candidates else None
 
-            # ── 2. Crawl contact pages if missing email or phone ─────────
-            if all_emails and all_phones:
-                logger.info("[validator] Homepage has both email and phone; skipping contact-page crawl")
+            # ── 2. Crawl contact pages if missing information ─────────
+            if len(all_emails) > 0 and len(all_phones) > 0 and len(all_social_links.keys()) > 0 and (location or city or country):
+                logger.info(
+                    "[validator] Homepage has both email and phone; skipping contact-page crawl"
+                )
             else:
                 logger.info("[validator] Contact-page crawl triggered")
                 for url in contact_candidates:
@@ -218,9 +225,17 @@ class WebsiteEmailValidator:
                         all_phones.extend(extract_phones_from_text(html))
 
                         if not (location and city and country):
-                            location, city, country = extract_location_city_country(html)
+                            location, city, country, zip_code = (
+                                extract_location_city_country(html)
+                            )
 
-                        if all_emails and all_phones:
+                        page_socials = extract_social_links(html)
+                        for platform, urls in page_socials.items():
+                            all_social_links[platform].update(urls)
+
+    
+                        # Quit after finding at least one email and one phone (heuristic: often on the same "Contact" page, no need to crawl more).
+                        if len(all_emails) > 0 and len(all_phones) > 0:
                             break
                     except Exception:
                         logger.exception(
@@ -233,13 +248,23 @@ class WebsiteEmailValidator:
                 f"[validator] find_contact_info_on_website done url={website_url} "
                 f"emails={len(all_emails)} phones={len(all_phones)} "
                 f"contact_page={contact_page!r} location={location!r} "
-                f"city={city!r} country={country!r}"
+                f"city={city!r} country={country!r} zip_code={zip_code!r} "
+                f"socials={list(all_social_links.keys())}"
             )
-            return all_emails, all_phones, contact_page, location, city, country
+            return ScrapedWebData(
+                emails=all_emails,
+                phones=all_phones,
+                contact_page=contact_page,
+                location=location,
+                city=city,
+                country=country,
+                zip_code=zip_code,
+                social_links=all_social_links,
+            )
 
         except Exception as exc:
             logger.error(f"[validator] Error finding contact info: {exc}")
-            return [], [], None, None, None, None
+            return empty
 
     def prepare_next_batch(self) -> None:
         """Close popup tabs and create a clean tab for the next batch cycle."""
