@@ -28,10 +28,18 @@ async def lifespan(app: FastAPI):
 
     if seed_tasks:
         try:
-            await asyncio.gather(*seed_tasks, return_exceptions=True)
-        except asyncio.CancelledError:
+            await asyncio.wait_for(
+                asyncio.gather(*seed_tasks, return_exceptions=True),
+                timeout=5.0
+            )
+
+        except KeyboardInterrupt:
             # Uvicorn may cancel lifespan during reload; keep shutdown clean.
             logger.debug("Lifespan shutdown gather cancelled during reload")
+            raise  # always re-raise
+        except Exception:
+            logger.error("Error occurred while waiting for seed tasks to complete", exc_info=True)
+
 
 
 app = FastAPI(title="Database Seeding API", version="0.1.0", lifespan=lifespan)

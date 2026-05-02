@@ -1,9 +1,10 @@
-export type JobStatus = "running" | "paused";
+export type JobStatus = "running" | "paused" | "completed";
 
 export type JobDisplayStatus = "queued" | "running" | "paused" | "completed" | "failed";
 
 export function deriveDisplayStatus(snapshot: JobSnapshot): JobDisplayStatus {
   if (snapshot.status === "running") return "running";
+  if (snapshot.status === "completed") return "completed";
   if (snapshot.error) return "failed";
   const total = snapshot.total_rows ?? 0;
   const current = snapshot.current_row ?? 0;

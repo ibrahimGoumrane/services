@@ -4,19 +4,19 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple , Literal
 from urllib.parse import urlparse
-from .models import ProcessingConfig, CsvRow , RowStats , PersonContactData , CompanyContactData , ScrapedWebData
+from api.services.database_seeding_service.src.models import CsvRow, RowStats, PersonContactData, CompanyContactData, ScrapedWebData
 
 import pandas as pd
 
 from api.services.utils.job_manager import job_store
 
 from api.models import CsvMapping
-from .models import ProcessingConfig
-from .utils import contact_repository, data_transformers, email_classifiers, mx_resolver
+from api.services.database_seeding_service.src.models import ProcessingConfig
+from api.services.database_seeding_service.src.utils import contact_repository, data_transformers, email_classifiers, mx_resolver
 from api.services.utils.logging_config import flush_buffered_log_handlers, get_logger, setup_logging
-from .utils.tld_country_mapper import get_country_from_email_domain
-from .utils.url_utils import extract_domain
-from .main.web_validator import WebsiteEmailValidator
+from api.services.database_seeding_service.src.utils.tld_country_mapper import get_country_from_email_domain
+from api.services.database_seeding_service.src.utils.url_utils import extract_domain
+from api.services.database_seeding_service.src.main.web_validator import WebsiteEmailValidator
 
 logger = get_logger(__name__)
 
@@ -272,10 +272,10 @@ def _scrape_website(url: str, validator: WebsiteEmailValidator) -> ScrapedWebDat
     try:
         scraped = validator.find_contact_info_on_website(url)
         logger.info(
-            f"Scraping done: emails={len(scraped.emails)} phones={len(scraped.phones)} "
+            f"Scraping done: emails={scraped.emails} phones={scraped.phones} "
             f"contact_page={scraped.contact_page!r} city={scraped.city!r} "
             f"country={scraped.country!r} zip_code={scraped.zip_code!r} "
-            f"socials={list(scraped.social_links.keys())}"
+            f"socials={scraped.social_links.values()}"
         )
         return scraped
     except Exception as exc:
@@ -401,7 +401,7 @@ def _enrich_person(
         person.email = validator.email_validator.filter_emails(scraped.emails)
 
     if not person.phone and scraped.phones:
-        person.phone = (scraped.phones[0] or "").strip() or None
+        person.phone = (".".join(scraped.phones).capitalize() or "").strip() or None
         if person.phone:
             logger.info(f"Phone found: '{person.phone}'")
 
@@ -544,7 +544,7 @@ def _enrich_company(
         company.email, generic_domains, generic_users, generic_mx, site_builder_domains
     )
     mx_host, is_generic = _resolve_mx(
-        company.email, is_generic, False, mx_cache, new_mx_records, generic_mx, site_builder_domains
+        company.email, is_generic, mx_cache, new_mx_records, generic_mx, site_builder_domains
     )
     company.mx_host = mx_host
     company.is_generic_email = is_generic
@@ -665,8 +665,11 @@ def _process_contact_row(
     website_company, needs_scraping_company = _resolve_website(csv, validator, type="company")
 
     if needs_scraping_company:
-        scraped_company = _scrape_website(website_company, validator)
-
+        if website_company != website:
+            logger.info(f"Company website resolved to a different URL than the person website; scraping separately: '{website_company}'")
+            scraped_company = _scrape_website(website_company, validator)
+        else:
+            scraped_company = scraped  # reuse same scraped data when URL is the same
         company = _enrich_company(
             csv=csv,
             website=website_company,
@@ -769,7 +772,7 @@ def process_database_seeding(
     """Read CSV, enrich contacts, validate MX, classify emails, and batch-write to DB."""
     global logger
     logger = setup_logging(
-        module_name="dbSeeder", job_id=job_id, buffer_size=config.batch_size
+        module_name="dbSeeder", job_id=job_id, max_size=config.batch_size
     )
 
     logger.info(
@@ -1043,7 +1046,7 @@ def process_single_url_seeding(
 ) -> Dict[str, Any]:
     """Scrape one URL, save one record, and return a compact scraping result payload."""
     global logger
-    logger = setup_logging(module_name="dbSeeder", job_id=job_id, buffer_size=1)
+    logger = setup_logging(module_name="dbSeeder", job_id=job_id, max_size=1)
 
     stats: Dict[str, Any] = {
         "total_rows": 1, "processed": 1, "inserted": 0, "updated": 0, "skipped": 0,

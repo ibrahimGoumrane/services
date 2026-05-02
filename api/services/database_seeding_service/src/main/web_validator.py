@@ -63,10 +63,10 @@ class WebsiteEmailValidator:
         )
         self.searcher = GoogleSearcher(
             self.driver,
-            excluded_domains=list(self.not_visiting_domains),
-            generic_domains=list(self.generic_domains),
             site_timeout_seconds=self.site_timeout_seconds,
         )
+
+        self.searcher.refresh_excluded(self.not_visiting_domains , self.generic_domains)
 
     def update_reference_filters(
         self,
@@ -83,8 +83,9 @@ class WebsiteEmailValidator:
 
         # Propagate to searcher
         if self.searcher:
-            self.searcher.excluded_domains = list(self.not_visiting_domains)
-            self.searcher.generic_domains = list(self.generic_domains)
+            self.searcher.refresh_excluded(
+                self.not_visiting_domains, self.generic_domains
+            )
 
         # Propagate to scraper
         if self.scraper:

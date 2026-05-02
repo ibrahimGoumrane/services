@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-JobStatus = Literal["running", "paused"]
+JobStatus = Literal["running", "paused", "completed"]
 
 
 @dataclass
@@ -86,13 +86,6 @@ class CsvMapping(BaseModel):
                 cleaned[k] = v
             return cleaned
         return data
-
-    @model_validator(mode="after")
-    def validate_identity_fields(self) -> "CsvMapping":
-        """Ensure that at least one of fullname, name, or email is provided."""
-        if not any([self.fullname, self.name, self.email]):
-            raise ValueError("csv_mapping must include at least one of: fullname, name, email")
-        return self
 
 
 class SeedDatabaseRequest(BaseModel):

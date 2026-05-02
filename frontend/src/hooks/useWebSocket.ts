@@ -128,7 +128,12 @@ function mergeMetricsFromLog(previous: JobMetrics, log: LogEntry): JobMetrics {
 function toSnapshot(data: Record<string, unknown>): JobSnapshot {
   return {
     job_id: String(data.job_id ?? ""),
-    status: data.status === "running" ? "running" : "paused",
+    status:
+      data.status === "running"
+        ? "running"
+        : data.status === "completed"
+          ? "completed"
+          : "paused",
     payload: (data.payload as Record<string, unknown>) ?? {},
     result: data.result as JobResult | null | undefined,
     error: data.error as string | null | undefined,

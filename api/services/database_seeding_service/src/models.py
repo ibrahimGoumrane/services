@@ -1,9 +1,8 @@
 """Configuration models for database seeding"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from attrs import field
 from pydantic import BaseModel, model_validator
 
 from api.models import CsvMapping

@@ -124,9 +124,15 @@ class NoDriverDriver:
                     if tab is None:
                         continue
                     try:
-                        self.run(tab.close())
+                        self.run(tab.close() , timeout_seconds=2.0)
                     except Exception:
-                        pass
+                        logger.warning("Error occurred while closing a tab during quit")
+                try:
+                    # Properly await disconnect to avoid 'never awaited' warnings
+                    if self.browser.connection:
+                        self.run(self.browser.connection.disconnect())
+                except (asyncio.TimeoutError, Exception):
+                    logger.warning("Timeout or error occurred while disconnecting browser")
                 self.browser.stop()
                 logger.info("NoDriver browser closed")
         except Exception as e:
@@ -136,7 +142,22 @@ class NoDriverDriver:
             self.tab = None
             if self._loop:
                 try:
+                    # Cancel all pending tasks (e.g. update_targets) so they don't
+                    # get destroyed without warning when the loop is closed.
+                    pending = asyncio.all_tasks(self._loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        self._loop.run_until_complete(
+                             asyncio.wait_for(
+                                asyncio.gather(*pending, return_exceptions=True),
+                                timeout=3.0
+                            )
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout occurred while waiting for pending tasks")
+                try:
                     self._loop.close()
                 except Exception:
-                    pass
-                self._loop = None
+                    logger.warning("Error occurred while closing the event loop")
+                self._loop = None       

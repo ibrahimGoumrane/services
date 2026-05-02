@@ -58,9 +58,9 @@ class JobStore:
         for job_file in _JOB_STORE_DIR.glob("*.json"):
             try:
                 payload = json.loads(job_file.read_text(encoding="utf-8"))
-                # Normalize legacy statuses to the two-state model.
+                # Normalize legacy statuses to the supported model.
                 raw_status = payload.get("status", "paused")
-                if raw_status not in ("running", "paused"):
+                if raw_status not in ("running", "paused", "completed"):
                     raw_status = "paused"
                 job = JobState(
                     job_id=payload["job_id"],
@@ -119,8 +119,8 @@ class JobStore:
                 return None
 
             if key == "status":
-                if value not in ("running", "paused"):
-                    raise ValueError("status must be 'running' or 'paused'")
+                if value not in ("running", "paused", "completed"):
+                    raise ValueError("status must be 'running', 'paused' or 'completed'")
                 job.status = value
                 if value == "running":
                     job.started_at = _utc_now_iso()
@@ -128,6 +128,9 @@ class JobStore:
                     job.completed_at = None
                 elif value == "paused":
                     job.paused_at = _utc_now_iso()
+                elif value == "completed":
+                    job.completed_at = _utc_now_iso()
+                    job.paused_at = None
             elif key == "progress":
                 if not isinstance(value, dict):
                     raise ValueError("progress must be a dict")

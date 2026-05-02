@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $rootPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 $apiPath = Join-Path $rootPath "api"
 $frontendPath = Join-Path $rootPath "frontend"
-$apiPython = Join-Path $apiPath "env\Scripts\python.exe"
+$apiPython = Join-Path $apiPath ".venv\Scripts\python.exe"
 
 if (-not (Test-Path $apiPath)) {
     throw "Backend folder not found: $apiPath"
@@ -14,10 +14,10 @@ if (-not (Test-Path $frontendPath)) {
 }
 
 if (-not (Test-Path $apiPython)) {
-    throw "Backend Python not found at $apiPython. Create the venv first: python -m venv api\\env"
+    throw "Backend Python not found at $apiPython. Create the venv first: python -m venv api\\.venv"
 }
 
-$backendCommand = "Set-Location '$rootPath'; & '$apiPython' -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000"
+$backendCommand = "Set-Location '$rootPath'; & '$apiPython' -m uvicorn api.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log"
 $frontendCommand = "Set-Location '$frontendPath'; npm run dev"
 
 Write-Host "Launching backend window on http://127.0.0.1:8000" -ForegroundColor Green

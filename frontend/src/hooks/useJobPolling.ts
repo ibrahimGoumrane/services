@@ -15,7 +15,11 @@ export function useJobPolling(
   useEffect(() => {
     // Only poll while the job is running and WS is disconnected.
     const shouldPoll =
-      jobId && !isWsConnected && currentStatus !== "paused";
+      jobId &&
+      !isWsConnected &&
+      currentStatus !== "paused" &&
+      currentStatus !== "completed" &&
+      currentStatus !== "failed";
 
     if (shouldPoll) {
       pollingIntervalRef.current = setInterval(async () => {

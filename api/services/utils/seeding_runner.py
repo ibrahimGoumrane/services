@@ -43,7 +43,7 @@ async def run_seed_job(job_id: str) -> None:
                 return
 
             job_store.update(job_id, "progress", {"result": result})
-            completed_job = job_store.update(job_id, "status", "paused")
+            completed_job = job_store.update(job_id, "status", "completed")
             if completed_job is not None:
                 await ws_manager.send_event(job_id, "completed", completed_job.to_dict())
 
