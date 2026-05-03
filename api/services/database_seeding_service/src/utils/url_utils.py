@@ -3,10 +3,10 @@
 import re
 from urllib.parse import urlparse
 import requests
-import logging
+from api.services.utils.log_socket import get_seeding_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 _DEFAULT_HEADERS = {
     "User-Agent": (

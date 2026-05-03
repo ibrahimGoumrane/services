@@ -10,8 +10,9 @@ from bs4 import BeautifulSoup
 
 from ..utils.url_utils import validate_website_http
 from .web_scraper import NoDriverDriver
+from api.services.utils.log_socket import get_seeding_logger
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 _SEARCH_FIELD_SELECTOR = 'textarea[name="q"], input[name="q"], #APjFqb'
 

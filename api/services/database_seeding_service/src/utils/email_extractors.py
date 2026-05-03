@@ -1,10 +1,10 @@
 """Email extraction from text utilities"""
 
-import logging
 import re
 from typing import List, Optional
+from api.services.utils.log_socket import get_seeding_logger
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 
 # Email regex pattern

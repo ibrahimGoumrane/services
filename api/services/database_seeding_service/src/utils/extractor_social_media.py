@@ -1,12 +1,12 @@
 """Social-media and communication link extraction from raw HTML."""
 
-import logging
+from api.services.utils.log_socket import get_seeding_logger
 import re
 from typing import Dict, List, Optional, Set
 
 from bs4 import BeautifulSoup
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 # ---------------------------------------------------------------------------
 # URL patterns per platform

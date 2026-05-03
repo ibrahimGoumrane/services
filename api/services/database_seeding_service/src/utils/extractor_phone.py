@@ -1,6 +1,6 @@
 """Phone number extraction from text utilities using the phonenumbers library."""
 
-import logging
+from api.services.utils.log_socket import get_seeding_logger
 import os
 from typing import List, Optional
 
@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 _FALLBACK_REGIONS = "US,GB,FR,DE,CA,AU,NL,BE,CH"
 DEFAULT_REGIONS = [

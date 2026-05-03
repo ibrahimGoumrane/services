@@ -11,8 +11,9 @@ from dotenv import load_dotenv
 load_dotenv()
 import nodriver as uc
 from nodriver import Config
+from api.services.utils.log_socket import get_seeding_logger
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",

@@ -1,11 +1,10 @@
 """Email validation and filtering utilities"""
 
-import logging
 from typing import List, Optional, Set
-
+from api.services.utils.log_socket import get_seeding_logger
 from .email_classifiers import classify_email
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 
 class EmailValidator:

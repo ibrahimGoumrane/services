@@ -5,10 +5,11 @@ from api.routes.jobs import router as jobs_router
 from api.routes.ws import router as ws_router
 import asyncio
 import os
-import logging
 
+from api.services.utils.log_socket import get_seeding_logger
+    
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

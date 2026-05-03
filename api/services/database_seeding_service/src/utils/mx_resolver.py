@@ -3,12 +3,12 @@
 from typing import Tuple, Optional, Dict, List
 import dns.resolver
 import tldextract
-import logging
+from api.services.utils.log_socket import get_seeding_logger
 
 from .contact_repository import get_mxrecord_by_domain
 
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 
 def resolve_mx_record(
