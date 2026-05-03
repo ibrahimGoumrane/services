@@ -41,6 +41,13 @@ export interface UrlScrapeResult {
   city?: string | null;
   country?: string | null;
   contact_form_url?: string | null;
+  whatsapp?: string | null;
+  facebook?: string | null;
+  instagram?: string | null;
+  tiktok?: string | null;
+  youtube?: string | null;
+  telegram?: string | null;
+  calendly?: string | null;
   status?: "inserted" | "updated";
 }
 

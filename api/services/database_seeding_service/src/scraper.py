@@ -270,14 +270,7 @@ def _scrape_website(url: str, validator: WebsiteEmailValidator) -> ScrapedWebDat
     """Scrape *url* and return raw contact data."""
     logger.info(f"Scraping website for contact data: '{url}'")
     try:
-        scraped = validator.find_contact_info_on_website(url)
-        logger.info(
-            f"Scraping done: emails={scraped.emails} phones={scraped.phones} "
-            f"contact_page={scraped.contact_page!r} city={scraped.city!r} "
-            f"country={scraped.country!r} zip_code={scraped.zip_code!r} "
-            f"socials={scraped.social_links.values()}"
-        )
-        return scraped
+        return  validator.find_contact_info_on_website(url)
     except Exception as exc:
         logger.warning(f"Web enrichment error for '{url}': {exc}")
         return ScrapedWebData()
@@ -409,6 +402,34 @@ def _enrich_person(
         person.city = scraped.city
     if not person.country and scraped.country:
         person.country = scraped.country
+    if not person.address and scraped.location:
+        person.address = scraped.location
+    # --- Social links ------------------------------------------------------
+    if scraped.social_links:
+        social_links = {platform: list(urls) for platform, urls in scraped.social_links.items()}
+        if not person.linkedin and social_links.get("linkedin"):
+            person.linkedin = social_links["linkedin"][0]
+        if not person.whatsapp and social_links.get("whatsapp"):
+            person.whatsapp = social_links["whatsapp"][0]
+        if not person.facebook and social_links.get("facebook"):
+            person.facebook = social_links["facebook"][0]
+        if not person.instagram and social_links.get("instagram"):
+            person.instagram = social_links["instagram"][0]
+        if not person.tiktok and social_links.get("tiktok"):
+            person.tiktok = social_links["tiktok"][0]
+        if not person.youtube and social_links.get("youtube"):
+            person.youtube = social_links["youtube"][0]
+        if not person.telegram and social_links.get("telegram"):
+            person.telegram = social_links["telegram"][0]
+        if not person.calendly and social_links.get("calendly"):
+            person.calendly = social_links["calendly"][0]
+
+    # --- Names extracted from website text ---------------------------------
+    # scraped.person_name maps to fullname, scraped.company_name maps to name
+    if not person.fullname and scraped.person_name:
+        person.fullname = scraped.person_name
+    if not person.name and scraped.company_name:
+        person.name = scraped.company_name
 
     # --- Person LinkedIn search -------------------------------------------
     if not validator.skip_website_search and not person.linkedin and person.fullname:
@@ -448,6 +469,16 @@ def _enrich_person(
     person.mx_host = mx_host
     person.is_generic_email = is_generic
     person.is_user_generic = is_user_generic
+
+    # --- Syntax / deliverability status -----------------------------------
+    if person.email.endswith("@nodomaine.com"):
+        person.status = "synthetic"
+    elif not mx_host:
+        person.status = "ko"
+    elif is_generic or is_user_generic:
+        person.status = "generic"
+    else:
+        person.status = "valid"
 
     # --- Country fallback from TLD ---------------------------------------
     if not person.country:
@@ -489,7 +520,8 @@ def _enrich_company(
 ) -> Optional[CompanyContactData]:
     """
     Build a :class:`CompanyContactData` record for the company associated with
-    *website*.  Returns *None* if the domain cannot be extracted.
+    *website*.  Scraped web data is used only to fill gaps not already
+    covered by CSV values.  Returns *None* if the domain cannot be extracted.
     """
     domain = extract_domain(website)
     if not domain:
@@ -498,12 +530,12 @@ def _enrich_company(
     company = CompanyContactData(
         name=csv.name or None,
         website=website,
-        phone=scraped.phones[0] if scraped.phones else csv.phone,
+        phone=csv.phone,
         address=csv.address,
-        city=scraped.city or csv.city or None,
+        city=csv.city or None,
         zip_code=csv.zip_code,
-        country=scraped.country or csv.country or None,
-        contact_form_url=scraped.contact_page or csv.contact_form_url,
+        country=csv.country or None,
+        contact_form_url=csv.contact_form_url,
         linkedin=csv.linkedin,
         position=csv.position,
         image=csv.image,
@@ -512,26 +544,56 @@ def _enrich_company(
         activite=csv.activite,
     )
 
-    # --- Best email for company ------------------------------------------
-    selected_email = ""
-    for candidate in scraped.emails:
-        candidate = (candidate or "").strip().lower()
-        if candidate and "@" in candidate:
-            selected_email = candidate
-            break
+    # --- Fill gaps from scraped data (never overwrite CSV values) -----------
+    if scraped.contact_page and not company.contact_form_url:
+        company.contact_form_url = scraped.contact_page
+        logger.info(f"Contact form found: '{scraped.contact_page}'")
 
-    if not selected_email:
-        company_local = _slugify_for_email(csv.name or "") or "company"
-        selected_email = f"{company_local}@{domain}"
+    if not company.email and scraped.emails:
+        company.email = validator.email_validator.filter_emails(scraped.emails) or ""
 
-    company.email = selected_email
+    if not company.phone and scraped.phones:
+        company.phone = (".".join(scraped.phones).capitalize() or "").strip() or None
+        if company.phone:
+            logger.info(f"Phone found: '{company.phone}'")
+
+    if not company.city and scraped.city:
+        company.city = scraped.city
+    if not company.country and scraped.country:
+        company.country = scraped.country
+    if not company.address and scraped.location:
+        company.address = scraped.location
+
+    # --- Social links ------------------------------------------------------
+    if scraped.social_links:
+        social_links = {platform: list(urls) for platform, urls in scraped.social_links.items()}
+        if not company.linkedin and social_links.get("linkedin"):
+            company.linkedin = social_links["linkedin"][0]
+        if not company.whatsapp and social_links.get("whatsapp"):
+            company.whatsapp = social_links["whatsapp"][0]
+        if not company.facebook and social_links.get("facebook"):
+            company.facebook = social_links["facebook"][0]
+        if not company.instagram and social_links.get("instagram"):
+            company.instagram = social_links["instagram"][0]
+        if not company.tiktok and social_links.get("tiktok"):
+            company.tiktok = social_links["tiktok"][0]
+        if not company.youtube and social_links.get("youtube"):
+            company.youtube = social_links["youtube"][0]
+        if not company.telegram and social_links.get("telegram"):
+            company.telegram = social_links["telegram"][0]
+        if not company.calendly and social_links.get("calendly"):
+            company.calendly = social_links["calendly"][0]
+
+    # --- Names extracted from website text ---------------------------------
+    if not company.name and scraped.company_name:
+        company.name = scraped.company_name
 
     # --- Company LinkedIn search ----------------------------------------
-    if not validator.skip_website_search and csv.name and not company.linkedin:
+    if not validator.skip_website_search and company.name and not company.linkedin:
         try:
-            logger.info(f"Company LinkedIn search: '{csv.name}'")
+            logger.info(f"Company LinkedIn search: '{company.name}'")
             urls, _ = validator.search_google(
-                csv.name, looking_for="linkedin_company"
+                company.name, looking_for="linkedin_company"
             )
             if urls:
                 company.linkedin = urls[0]
@@ -539,10 +601,18 @@ def _enrich_company(
         except Exception as exc:
             logger.debug(f"Company LinkedIn search failed (non-fatal): {exc}")
 
-    # --- Email classification + MX --------------------------------------
+    # --- Synthetic e-mail fallback ----------------------------------------
+    if not company.email or "@" not in company.email:
+        company_local = _slugify_for_email(company.name or "") or "company"
+        company.email = f"{company_local}@{domain}"
+        logger.info(f"Company synthetic fallback email: '{company.email}'")
+
+    # --- E-mail classification -------------------------------------------
     is_generic, is_user_generic = email_classifiers.classify_email(
         company.email, generic_domains, generic_users, generic_mx, site_builder_domains
     )
+
+    # --- MX resolution ---------------------------------------------------
     mx_host, is_generic = _resolve_mx(
         company.email, is_generic, mx_cache, new_mx_records, generic_mx, site_builder_domains
     )
@@ -550,6 +620,35 @@ def _enrich_company(
     company.is_generic_email = is_generic
     company.is_user_generic = is_user_generic
 
+    # --- Syntax / deliverability status -----------------------------------
+    if company.email.endswith("@nodomaine.com"):
+        company.status = "synthetic"
+    elif not mx_host:
+        company.status = "ko"
+    elif is_generic or is_user_generic:
+        company.status = "generic"
+    else:
+        company.status = "valid"
+
+    # --- Country fallback from TLD ---------------------------------------
+    if not company.country:
+        try:
+            from_tld = get_country_from_email_domain(company.email)
+            if from_tld:
+                company.country = from_tld
+        except Exception as exc:
+            logger.debug(f"Country enrichment failed for {company.email}: {exc}")
+
+    # CSV city/country always win if present
+    if csv.city:
+        company.city = csv.city
+    if csv.country:
+        company.country = csv.country
+
+    logger.info(
+        f"Company email classification: is_generic={company.is_generic_email}, "
+        f"is_user_generic={company.is_user_generic}"
+    )
     return company
 
 
@@ -1114,6 +1213,13 @@ def process_single_url_seeding(
             "city": contact_data[11],
             "country": contact_data[13],
             "contact_form_url": contact_data[14],
+            "whatsapp": contact_data[24],
+            "facebook": contact_data[25],
+            "instagram": contact_data[26],
+            "tiktok": contact_data[27],
+            "youtube": contact_data[28],
+            "telegram": contact_data[29],
+            "calendly": contact_data[30],
             "status": "updated" if updated else "inserted",
         }
         return stats

@@ -104,6 +104,13 @@ class PersonContactData:
     sourcefile: Optional[str] = None
     ca: Optional[str] = None
     activite: str = ""
+    whatsapp: Optional[str] = None
+    facebook: Optional[str] = None
+    instagram: Optional[str] = None
+    tiktok: Optional[str] = None
+    youtube: Optional[str] = None
+    telegram: Optional[str] = None
+    calendly: Optional[str] = None
 
     def to_tuple(self) -> tuple:
         return (
@@ -112,6 +119,8 @@ class PersonContactData:
             self.address, self.city, self.zip_code, self.country, self.contact_form_url,
             self.linkedin, self.image, self.mx_host, self.is_generic_email, self.is_user_generic,
             self.status, self.sourcefile, self.ca, self.activite,
+            self.whatsapp, self.facebook, self.instagram, self.tiktok, self.youtube,
+            self.telegram, self.calendly,
        )
 
 @dataclass
@@ -136,16 +145,25 @@ class CompanyContactData:
     sourcefile: Optional[str] = None
     ca: Optional[str] = None
     activite: str = ""
-    
+    whatsapp: Optional[str] = None
+    facebook: Optional[str] = None
+    instagram: Optional[str] = None
+    tiktok: Optional[str] = None
+    youtube: Optional[str] = None
+    telegram: Optional[str] = None
+    calendly: Optional[str] = None
+
     def to_tuple(self) -> tuple:
         """Return a tuple of all fields in a consistent order for database insertion."""
         return (
-        self.email, None, None, None, self.website,
-        self.position, self.phone, None, None, self.name,
-        self.address, self.city, self.zip_code, self.country, self.contact_form_url,
-        self.linkedin, self.image, self.mx_host, self.is_generic_email, self.is_user_generic,
-        self.status, self.sourcefile, self.ca, self.activite,
-    )
+            self.email, None, None, None, self.website,
+            self.position, self.phone, None, None, self.name,
+            self.address, self.city, self.zip_code, self.country, self.contact_form_url,
+            self.linkedin, self.image, self.mx_host, self.is_generic_email, self.is_user_generic,
+            self.status, self.sourcefile, self.ca, self.activite,
+            self.whatsapp, self.facebook, self.instagram, self.tiktok, self.youtube,
+            self.telegram, self.calendly,
+        )
 
 @dataclass
 class RowStats:

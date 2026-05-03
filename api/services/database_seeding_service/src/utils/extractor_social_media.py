@@ -4,7 +4,7 @@ from api.services.utils.log_socket import get_seeding_logger
 import re
 from typing import Dict, List, Optional, Set
 
-from bs4 import BeautifulSoup
+import html as html_lib
 
 logger = get_seeding_logger()
 
@@ -84,7 +84,7 @@ def _scan_text(text: str) -> Dict[str, Set[str]]:
     return matches
 
 
-def extract_social_links(html: Optional[str]) -> Dict[str, List[str]]:
+def extract_social_links(html: Optional[str]) -> Dict[str, Set[str]]:
     """
     Extract social-media and communication links from raw HTML.
 
@@ -104,26 +104,9 @@ def extract_social_links(html: Optional[str]) -> Dict[str, List[str]]:
     """
     if not html or not isinstance(html, str):
         return {}
-
-    # ------------------------------------------------------------------
-    # 1. Raw HTML scan
-    # ------------------------------------------------------------------
-    result = _scan_text(html)
-
-    # ------------------------------------------------------------------
-    # 2. Parsed-attribute scan (BeautifulSoup)
-    # ------------------------------------------------------------------
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        for tag in soup.find_all(True):  # iterate over every tag
-            for attr in _URL_ATTRS:
-                value = tag.get(attr)
-                if not value or not isinstance(value, str):
-                    continue
-                partial = _scan_text(value)
-                for platform, urls in partial.items():
-                    result[platform].update(urls)
-    except Exception as exc:
-        logger.warning(f"BeautifulSoup parsing failed during social extraction: {exc}")
-
+    
+    decoded = html_lib.unescape(html)
+    result = _scan_text(decoded)
+    
     return result
+

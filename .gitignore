@@ -10,3 +10,4 @@ dist/
 docs/
 test-data/
 tmp/
+migrations/

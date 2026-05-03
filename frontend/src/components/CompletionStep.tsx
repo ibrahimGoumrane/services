@@ -218,6 +218,13 @@ export function CompletionStep({
                   label: "Contact Form URL",
                   value: urlResult.contact_form_url,
                 },
+                { label: "WhatsApp", value: urlResult.whatsapp },
+                { label: "Facebook", value: urlResult.facebook },
+                { label: "Instagram", value: urlResult.instagram },
+                { label: "TikTok", value: urlResult.tiktok },
+                { label: "YouTube", value: urlResult.youtube },
+                { label: "Telegram", value: urlResult.telegram },
+                { label: "Calendly", value: urlResult.calendly },
                 { label: "DB Action", value: urlResult.status },
               ].map((item) => (
                 <div
