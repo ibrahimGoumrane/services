@@ -164,3 +164,5 @@ class ScrapedWebData:
     country: Optional[str] = None
     zip_code: Optional[str] = None
     social_links: Dict[str, List[str]] = field(default_factory=dict)
+    person_name: Optional[str] = None
+    company_name: Optional[str] = None

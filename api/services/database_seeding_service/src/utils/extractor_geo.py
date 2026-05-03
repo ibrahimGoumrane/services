@@ -6,6 +6,7 @@ from collections import Counter
 from bs4 import BeautifulSoup
 
 import nltk
+from api.services.utils.log_socket import get_seeding_logger
 from geopy.geocoders import Nominatim
 import locationtagger
 
@@ -17,7 +18,7 @@ nltk.downloader.download('maxent_treebank_pos_tagger')
 nltk.downloader.download('punkt')
 nltk.download('averaged_perceptron_tagger')
 
-logger = logging.getLogger(__name__)
+logger = get_seeding_logger()
 
 def _strip_html(html: str) -> str:
     """Parse HTML and return clean text for NER processing. Remove headers, scripts, styles, and excessive whitespace."""
@@ -31,29 +32,42 @@ def _strip_html(html: str) -> str:
         node.decompose()
     return bs.get_text(" ", strip=True)
 
-def _score_locations(entities) -> tuple[Optional[str], Optional[str]]:
-    """
-    Score extracted locations by frequency and position (earlier = more relevant).
-    Returns (best_country, best_city).
-    """
-    # Count raw mentions across all location lists
-    country_counts = Counter(entities.countries)
-    city_counts = Counter(entities.cities)
+def _match_exact(name: str, text: str) -> bool:
+    return bool(re.search(rf"\b{re.escape(name)}\b", text, re.IGNORECASE))
 
-    # Boost cities that are explicitly paired with a country
-    for country, cities in entities.country_cities.items():
-        for city in cities:
-            city_counts[city] += 2        # paired mention = stronger signal
+def _filter_locations(entities, text) -> tuple[list, list]:
+    """Filter using only countries and cities for now if at least one city is saved it will be prioritized over country-only matches. Exact word boundary matches are required to reduce false positives (e.g., "York" in "New York")."""
+    countries = [c for c in entities.countries if _match_exact(c, text)]
+    cities    = [c for c in entities.cities    if _match_exact(c, text) and len(c) > 3]
+    return countries, cities
+
+def _score_locations(countries, cities, country_cities) -> tuple[Optional[str], Optional[str], Counter, Counter]:
+    """
+    Score and rank location candidates:
+        - Cities are always prioritized over countries when both are present (more specific).
+        - If no city found, fall back to best country, then try to find a paired city from country_cities.
+    """
+    city_counts    = Counter(cities)
+    country_counts = Counter(countries)
+
+    # Boost paired mentions
+    for country, paired_cities in country_cities.items():
+        if country in country_counts:       
             country_counts[country] += 2
+        for city in paired_cities:
+            if city in city_counts:
+                city_counts[city] += 2
 
-    # Boost cities found in country_regions too
-    for country, regions in entities.country_regions.items():
-        country_counts[country] += 1
 
+    best_city    = city_counts.most_common(1)[0][0]    if city_counts    else None
     best_country = country_counts.most_common(1)[0][0] if country_counts else None
-    best_city = city_counts.most_common(1)[0][0] if city_counts else None
 
-    return best_country, best_city , country_counts, city_counts
+    # If no city found, try to find one paired with the best country
+    if not best_city and best_country:
+        paired = country_cities.get(best_country, [])
+        best_city = paired[0] if paired else None
+
+    return best_country, best_city, country_counts, city_counts
 
 
 def _extract_with_locationtagger(
@@ -69,6 +83,7 @@ def _extract_with_locationtagger(
     first_city = None
 
     try:
+        
         entities = locationtagger.find_locations(text=text)
 
         # Log raw extraction for debugging confidence
@@ -77,7 +92,9 @@ def _extract_with_locationtagger(
         logger.debug(f"Country-city pairs: {entities.country_cities}")
         logger.debug(f"Other regions: {entities.other}")  # ambiguous/low-confidence hits
 
-        first_country, first_city , country_counts, city_counts = _score_locations(entities)
+        # Apply filtering and scoring to handle multiple candidates and boost paired mentions
+        countries, cities = _filter_locations(entities, text)
+        first_country, first_city , country_counts, city_counts = _score_locations(countries, cities, entities.country_cities)
 
         if len(entities.countries) > 3 and country_counts.most_common(1)[0][1] == 1:
             logger.debug("Low confidence country — too many candidates, no clear winner")
@@ -87,13 +104,6 @@ def _extract_with_locationtagger(
             logger.debug("Low confidence city — too many candidates, no clear winner")
             first_city = None
 
-        if entities.country_cities:
-            # Pick the first country that has associated cities
-            for country, cities in entities.country_cities.items():
-                if country and cities:
-                    first_country = country
-                    first_city = cities[0]
-                    break
 
         # Fallback: use standalone countries / cities lists
         if not first_country and entities.countries:
@@ -109,7 +119,7 @@ def _extract_with_locationtagger(
             f"locationtagger — country={first_country!r} city={first_city!r}"
         )
 
-        # --- zip code via geopy ---
+        # --- zip , country , city fallbacks via geopy ---
         zip_code = None
         if first_country or first_city:
             query = ", ".join(filter(None, [first_city, first_country]))
@@ -125,6 +135,10 @@ def _extract_with_locationtagger(
                 if reversed_location and reversed_location.raw.get("address"):
                     addr = reversed_location.raw["address"]
                     zip_code = addr.get("postcode")
+                    if not first_country:
+                        first_country = addr.get("country")
+                    if not first_city:
+                        first_city = addr.get("city") or addr.get("town") or addr.get("village")
 
         return address, first_country, first_city, zip_code
 

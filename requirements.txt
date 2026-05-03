@@ -19,3 +19,4 @@ geopy
 lxml_html_clean
 phonenumbers
 opencv-python
+langdetect
