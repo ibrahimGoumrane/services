@@ -212,7 +212,7 @@ class WebsiteEmailValidator:
             # ── 2. Crawl contact pages if missing information ─────────
             if len(all_emails) > 0 and len(all_phones) > 0 and len(all_social_links.keys()) > 0 and (location or city or country):
                 logger.info(
-                    "[validator] Homepage has both email and phone; skipping contact-page crawl"
+                    "[validator] Home page has all required information; skipping contact-page crawl"
                 )
             else:
                 logger.info("[validator] Contact-page crawl triggered")

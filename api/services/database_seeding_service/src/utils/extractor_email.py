@@ -8,7 +8,10 @@ logger = logging.getLogger(__name__)
 
 
 # Email regex pattern
-EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+EMAIL_PATTERN = re.compile(
+    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
+    re.IGNORECASE
+)
 
 # File extensions that should not be matched as emails
 EXCLUDED_EXTENSIONS = (
@@ -83,8 +86,5 @@ def extract_emails_from_text(text: Optional[str]) -> List[str]:
         if email_lower not in seen:
             seen.add(email_lower)
             unique_emails.append(email)
-
-    if len(unique_emails) < len(emails):
-        logger.debug(f"Removed {len(emails) - len(unique_emails)} duplicate email(s)")
 
     return unique_emails
