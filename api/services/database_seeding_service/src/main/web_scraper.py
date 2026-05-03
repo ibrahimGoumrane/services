@@ -20,11 +20,13 @@ class PageScraper:
         self,
         driver: NoDriverDriver,
         excluded_domains: Optional[List[str]] = None,
-        site_timeout_seconds: int = 30,
+        site_timeout_seconds: int = 20,
+        page_load_timeout_seconds: int = 45,
     ) -> None:
         self.driver = driver
         self.excluded_domains = excluded_domains or []
         self.site_timeout_seconds = site_timeout_seconds
+        self.page_load_timeout_seconds = page_load_timeout_seconds
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -42,9 +44,9 @@ class PageScraper:
             raise RuntimeError("Driver tab not initialized. Call setup() first.")
 
         self.driver.run(
-            self.driver.tab.get(url), timeout_seconds=self.site_timeout_seconds
+            self.driver.tab.get(url), timeout_seconds=self.page_load_timeout_seconds
         )
-        self.driver.run(self.driver.tab.sleep(1.5))
+        self.driver.run(self.driver.tab.sleep(0.8))
 
         self._handle_cf_challenge()
         self._accept_cookies()
@@ -88,22 +90,22 @@ class PageScraper:
         try:
             btn = (
                 self.driver.run(
-                    self.driver.tab.find("accept", best_match=True, timeout=3)
+                    self.driver.tab.find("accept", best_match=True, timeout=2)
                 )
                 or self.driver.run(
-                    self.driver.tab.find("agree", best_match=True, timeout=2)
+                    self.driver.tab.find("agree", best_match=True, timeout=1)
                 )
             )
             if btn:
                 self.driver.run(btn.mouse_move())
-                self.driver.run(self.driver.tab.sleep(0.3))
+                self.driver.run(self.driver.tab.sleep(0.15))
                 self.driver.run(btn.mouse_click())
                 logger.info("✓ Accepted cookie consent")
-                self.driver.run(self.driver.tab.sleep(1.0))
+                self.driver.run(self.driver.tab.sleep(0.4))
         except Exception:
             logger.debug("Cookie banner not found or interaction failed (non-fatal)")
 
-    def _human_scroll(self, steps: int = 4) -> None:
+    def _human_scroll(self, steps: int = 2) -> None:
         """Scroll down in small random increments with pauses."""
         if not self.driver.tab:
             return
@@ -112,7 +114,7 @@ class PageScraper:
                 self.driver.run(
                     self.driver.tab.scroll_down(random.randint(150, 350))
                 )
-                self.driver.run(self.driver.tab.sleep(random.uniform(0.4, 1.0)))
+                self.driver.run(self.driver.tab.sleep(random.uniform(0.2, 0.4)))
         except Exception as e:
             logger.debug(f"Human scroll failed (non-fatal): {e}")
 

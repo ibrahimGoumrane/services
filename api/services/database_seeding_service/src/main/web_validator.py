@@ -60,10 +60,12 @@ class WebsiteEmailValidator:
             self.driver,
             excluded_domains=list(self.not_visiting_domains),
             site_timeout_seconds=self.site_timeout_seconds,
+            page_load_timeout_seconds=45,
         )
         self.searcher = GoogleSearcher(
             self.driver,
             site_timeout_seconds=self.site_timeout_seconds,
+            page_load_timeout_seconds=45,
         )
 
         self.searcher.refresh_excluded(self.not_visiting_domains , self.generic_domains)
