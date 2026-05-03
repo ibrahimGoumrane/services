@@ -502,6 +502,71 @@ def _enrich_person(
     return person
 
 
+def _enrich_extra_contacts(
+    person: PersonContactData,
+    extra_emails: List[str],
+    generic_domains: Set[str],
+    generic_users: Set[str],
+    generic_mx: Set[str],
+    site_builder_domains: Set[str],
+    mx_cache: Dict,
+    new_mx_records: List,
+) -> List[Tuple]:
+    extra_contacts: List[Tuple] = []
+    for extra_email in extra_emails:
+        extra_person = PersonContactData(
+            email=extra_email.strip().lower(),
+            fullname=person.fullname,
+            fname=person.fname,
+            lname=person.lname,
+            website=person.website,
+            position=person.position,
+            phone=person.phone,
+            mobile=person.mobile,
+            fax=person.fax,
+            name=person.name,
+            address=person.address,
+            city=person.city,
+            zip_code=person.zip_code,
+            country=person.country,
+            contact_form_url=person.contact_form_url,
+            linkedin=person.linkedin,
+            image=person.image,
+            sourcefile=person.sourcefile,
+            ca=person.ca,
+            activite=person.activite,
+            whatsapp=person.whatsapp,
+            facebook=person.facebook,
+            instagram=person.instagram,
+            tiktok=person.tiktok,
+            youtube=person.youtube,
+            telegram=person.telegram,
+            calendly=person.calendly,
+        )
+
+        is_generic, is_user_generic = email_classifiers.classify_email(
+            extra_person.email, generic_domains, generic_users, generic_mx, site_builder_domains
+        )
+        mx_host, is_generic = _resolve_mx(
+            extra_person.email, is_generic, mx_cache, new_mx_records, generic_mx, site_builder_domains
+        )
+        extra_person.mx_host = mx_host
+        extra_person.is_generic_email = is_generic
+        extra_person.is_user_generic = is_user_generic
+
+        if not mx_host:
+            extra_person.status = "ko"
+        elif is_generic or is_user_generic:
+            extra_person.status = "generic"
+        else:
+            extra_person.status = "valid"
+
+        extra_contacts.append(extra_person.to_tuple())
+        logger.info(f"Extra person contact staged for '{extra_person.email}'")
+
+    return extra_contacts
+
+
 # ---------------------------------------------------------------------------
 # Company enrichment
 # ---------------------------------------------------------------------------
@@ -652,6 +717,52 @@ def _enrich_company(
     return company
 
 
+def _enrich_company_contact(
+    csv: CsvRow,
+    person_website: str,
+    scraped: ScrapedWebData,
+    validator: WebsiteEmailValidator,
+    generic_domains: Set[str],
+    generic_users: Set[str],
+    generic_mx: Set[str],
+    site_builder_domains: Set[str],
+    mx_cache: Dict,
+    new_mx_records: List,
+) -> Tuple[List[Tuple], Optional[str]]:
+    enriched: List[Tuple] = []
+    company_linkedin: Optional[str] = None
+
+    website_company, needs_scraping_company = _resolve_website(csv, validator, type="company")
+
+    if not needs_scraping_company:
+        return enriched, company_linkedin
+
+    if website_company != person_website:
+        logger.info(f"Company website resolved to a different URL than the person website; scraping separately: '{website_company}'")
+        scraped_company = _scrape_website(website_company, validator)
+    else:
+        scraped_company = scraped
+
+    company = _enrich_company(
+        csv=csv,
+        website=website_company,
+        scraped=scraped_company,
+        validator=validator,
+        generic_domains=generic_domains,
+        generic_users=generic_users,
+        generic_mx=generic_mx,
+        site_builder_domains=site_builder_domains,
+        mx_cache=mx_cache,
+        new_mx_records=new_mx_records,
+    )
+    if company is not None:
+        enriched.append(company.to_tuple())
+        logger.info(f"Company contact staged for '{person_website}'")
+        company_linkedin = company.linkedin
+
+    return enriched, company_linkedin
+
+
 # ---------------------------------------------------------------------------
 # LinkedIn URL helpers (called before enrichment)
 # ---------------------------------------------------------------------------
@@ -742,10 +853,47 @@ def _process_contact_row(
 
     # ------------------------------------------------------------------
     # 6. Enrich person contact
+    #   Scraped data will contain multiple emails , we will use the first as the main email for person 
+    #   The others will be saved in the extra_contacts with the same shared data as the main one.
     # ------------------------------------------------------------------
+    # The main person 
+    
     person = _enrich_person(
+            csv=csv,
+            website=website,
+            scraped=scraped,
+            validator=validator,
+            generic_domains=generic_domains,
+            generic_users=generic_users,
+            generic_mx=generic_mx,
+            site_builder_domains=site_builder_domains,
+            mx_cache=mx_cache,
+            new_mx_records=new_mx_records,
+            row_stats=row_stats,
+        )
+    main_email = person.email if person.email and "@" in person.email else None
+    extra_emails = [e for e in scraped.emails if e != main_email]
+    extra_contacts.extend(
+        _enrich_extra_contacts(
+            person=person,
+            extra_emails=extra_emails,
+            generic_domains=generic_domains,
+            generic_users=generic_users,
+            generic_mx=generic_mx,
+            site_builder_domains=site_builder_domains,
+            mx_cache=mx_cache,
+            new_mx_records=new_mx_records,
+        )
+    )
+        
+
+
+    # ------------------------------------------------------------------
+    # 7. Enrich company contact (only when URL was found via Google search)
+    # ------------------------------------------------------------------
+    company_tuples, company_linkedin = _enrich_company_contact(
         csv=csv,
-        website=website,
+        person_website=website,
         scraped=scraped,
         validator=validator,
         generic_domains=generic_domains,
@@ -754,41 +902,11 @@ def _process_contact_row(
         site_builder_domains=site_builder_domains,
         mx_cache=mx_cache,
         new_mx_records=new_mx_records,
-        row_stats=row_stats,
     )
-
-    # ------------------------------------------------------------------
-    # 7. Enrich company contact (only when URL was found via Google search)
-    # ------------------------------------------------------------------
-
-    website_company, needs_scraping_company = _resolve_website(csv, validator, type="company")
-
-    if needs_scraping_company:
-        if website_company != website:
-            logger.info(f"Company website resolved to a different URL than the person website; scraping separately: '{website_company}'")
-            scraped_company = _scrape_website(website_company, validator)
-        else:
-            scraped_company = scraped  # reuse same scraped data when URL is the same
-        company = _enrich_company(
-            csv=csv,
-            website=website_company,
-            scraped=scraped_company,
-            validator=validator,
-            generic_domains=generic_domains,
-            generic_users=generic_users,
-            generic_mx=generic_mx,
-            site_builder_domains=site_builder_domains,
-            mx_cache=mx_cache,
-            new_mx_records=new_mx_records,
-        )
-        if company is not None:
-            extra_contacts.append(company.to_tuple())
-            logger.info(f"Company contact staged for '{website}'")
-
-            # Back-fill company LinkedIn onto the person record if missing
-            if company.linkedin and not person.linkedin:
-                person.linkedin = company.linkedin
-
+    
+    if company_linkedin and not person.linkedin:
+        person.linkedin = company_linkedin
+    extra_contacts.extend(company_tuples)
 
     return person.to_tuple(), row_stats, extra_contacts
 
@@ -1174,7 +1292,6 @@ def process_single_url_seeding(
             _load_reference_data()
         )
 
-        
         validator.update_reference_filters(
             generic_domains=generic_domains,
             generic_users=generic_users,
