@@ -208,7 +208,7 @@ class WebsiteEmailValidator:
             )
             all_social_links = extract_social_links(homepage_html)
             contact_candidates = extract_contact_links(
-                website_url, homepage_html, url_ok=self.scraper._http_ok
+                website_url, homepage_html, url_ok=validate_website_http
             )
             contact_page = contact_candidates[0] if contact_candidates else None
             person_name, company_name = extract_name_company(homepage_html)

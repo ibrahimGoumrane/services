@@ -66,7 +66,7 @@ def _get_pool() -> pooling.MySQLConnectionPool:
         _connection_pool = pooling.MySQLConnectionPool(
             pool_name="seeding_pool",
             pool_size=5,
-            pool_recycle=3600,
+            pool_reset_session=3600,
             **_DB_CONFIG,
         )
     return _connection_pool

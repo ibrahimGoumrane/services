@@ -15,8 +15,18 @@ from api.services.utils.log_socket import get_seeding_logger
 
 logger = get_seeding_logger()
 
+# In case we need to update these in the future. 
 _SEARCH_FIELD_SELECTOR = '#APjFqb'
-_SUBMIT_BUTTON_SELECTOR = 'input.gNO89b'
+_SUBMIT_BUTTON_SELECTOR = 'body > div.L3eUgb > div.o3j99.ikrT4e.om7nvf > form > div:nth-child(1) > div > div.FPdoLc.lJ9FBc > center > input.gNO89b'
+_LOCAL_PANEL_SELECTOR = 'div.zhZ3gf'
+_ORGANIC_RESULT_CONTAINER_SELECTOR = '.A6K0A'
+_ORGANIC_RESULT_ANCHOR_SELECTOR = 'a[jsname="UWckNb"]'
+_LOCAL_ACTION_BLOCK_SELECTOR = 'div.bkaPDb'
+_LOCAL_ACTION_LABEL_SELECTOR = 'span.aSAiSd'
+_PHONE_ELEMENT_SELECTOR = '[data-phone-number]'
+_ACTION_LINK_SELECTOR = 'a[href]'
+_ADDRESS_CONTAINER_SELECTOR = '[data-attrid="kc:/location/location:address"]'
+_ADDRESS_TEXT_SELECTOR = 'span.LrzXr'
 
 _LOCAL_ACTION_MAP: Dict[str, str] = {
     "website": "website",
@@ -232,9 +242,9 @@ class GoogleSearcher:
         if not html:
             return None
         soup = BeautifulSoup(html, "html.parser")
-        panel = soup.select_one("div.zhZ3gf")
+        panel = soup.select_one(_LOCAL_PANEL_SELECTOR)
         if not panel:
-            logger.debug("No local panel found (div.zhZ3gf)")
+            logger.debug(f"No local panel found ({_LOCAL_PANEL_SELECTOR})")
             return None
         return self._extract_local_actions(panel)
 
@@ -253,8 +263,8 @@ class GoogleSearcher:
         urls: List[str] = []
         seen: set = set()
 
-        for container in soup.select(".A6K0A"):
-            anchor = container.select_one('a[jsname="UWckNb"]')
+        for container in soup.select(_ORGANIC_RESULT_CONTAINER_SELECTOR):
+            anchor = container.select_one(_ORGANIC_RESULT_ANCHOR_SELECTOR)
             if not anchor:
                 continue
             candidate = _resolve_href(anchor.get("href", "").strip())
@@ -272,8 +282,8 @@ class GoogleSearcher:
     def _extract_local_actions(self, root) -> Dict[str, str]:
         """Return a mapping of action-key → URL/value from the local panel."""
         actions: Dict[str, str] = {}
-        for block in root.select("div.bkaPDb"):
-            label_el = block.select_one("span.aSAiSd")
+        for block in root.select(_LOCAL_ACTION_BLOCK_SELECTOR):
+            label_el = block.select_one(_LOCAL_ACTION_LABEL_SELECTOR)
             key = _normalize_label(
                 label_el.get_text(" ", strip=True) if label_el else ""
             )
@@ -281,14 +291,14 @@ class GoogleSearcher:
                 continue
 
             if key == "call":
-                phone_el = block.select_one("[data-phone-number]")
+                phone_el = block.select_one(_PHONE_ELEMENT_SELECTOR)
                 if phone_el:
                     phone = (phone_el.get("data-phone-number") or "").strip()
                     if phone:
                         actions["phone"] = phone
                 continue
 
-            link = block.select_one("a[href]")
+            link = block.select_one(_ACTION_LINK_SELECTOR)
             href = (link.get("href") or "").strip() if link else ""
             if not href:
                 continue
@@ -303,10 +313,10 @@ class GoogleSearcher:
                 actions[key] = f"https://www.google.com{href}"
         
         # Extract the address field
-        container = root.select_one('[data-attrid="kc:/location/location:address"]')
+        container = root.select_one(_ADDRESS_CONTAINER_SELECTOR)
 
         if container:
-            address_el = container.select_one("span.LrzXr")
+            address_el = container.select_one(_ADDRESS_TEXT_SELECTOR)
             if address_el:
                 address = address_el.get_text(strip=True)   
                 if address:

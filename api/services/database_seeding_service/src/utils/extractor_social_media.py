@@ -104,9 +104,30 @@ def extract_social_links(html: Optional[str]) -> Dict[str, Set[str]]:
     """
     if not html or not isinstance(html, str):
         return {}
-    
+
     decoded = html_lib.unescape(html)
     result = _scan_text(decoded)
-    
-    return result
+
+    return {k: v for k, v in result.items() if len(v) > 0}
+
+
+def extract_social_links_from_urls(urls: List[str]) -> Dict[str, Set[str]]:
+    """
+    Extract social-media URLs from a list of absolute URLs.
+
+    This is useful when Google organic results contain social links that
+    would otherwise be discarded by domain exclusion filters.
+
+    Args:
+        urls: List of URLs (e.g. from a Google search result).
+
+    Returns:
+        Same shape as ``extract_social_links`` — ``{platform: {url, ...}}``.
+    """
+    if not urls:
+        return {}
+    text = " ".join(str(u) for u in urls if u)
+    result = _scan_text(text)
+    # Remove empty platforms
+    return {k: v for k, v in result.items() if len(v) > 0}
 

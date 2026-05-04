@@ -20,7 +20,8 @@ from api.services.utils.logging_config import flush_buffered_log_handlers, get_l
 from api.services.database_seeding_service.src.utils.tld_country_mapper import get_country_from_email_domain
 from api.services.database_seeding_service.src.utils.url_utils import extract_domain
 from api.services.database_seeding_service.src.main.web_validator import WebsiteEmailValidator
-from api.services.database_seeding_service.src.utils.exception import JobInterruptionRequested, WebsearchFailure
+from api.services.database_seeding_service.src.utils.extractor_social_media import extract_social_links_from_urls
+from api.services.database_seeding_service.src.utils.exceptions import JobInterruptionRequested, WebsearchFailure
 logger = get_logger(__name__)
 
 SITE_TIMEOUT_SECONDS = 30
@@ -237,34 +238,39 @@ def _resolve_website(
     csv: CsvRow,
     validator: WebsiteEmailValidator,
     type : Literal["person", "company"] = "person"
-) -> Tuple[str, bool, Optional[Dict[str, str]]]:
+) -> Tuple[str, bool, Optional[Dict[str, str]], Optional[Dict[str, Set[str]]]]:
     """
-    Return *(resolved_url, needs_scraping, local_panel)*.
+    Return *(resolved_url, needs_scraping, local_panel, social_links_from_candidates)*.
 
     Checks in order:
-      1. CSV-provided URL → validate → DB dedup check
-      2. Google search by company name → validate → DB dedup check
+      1. CSV-provided URL → validate → if valid skip google search → DB dedup check
+      2. Google search by company name and full name → validate → DB dedup check
 
     Back-fills *csv* from DB when the domain already exists.
     local_panel contains Google My Business data (phone, directions, etc.) if available.
+    social_links_from_candidates contains social URLs found in *all* Google results,
+    including those that were discarded by the domain filter (e.g. LinkedIn).
     """
     website = csv.website
 
     if website:
+        website_valid = True
         if not validator.validate_website(website):
             logger.info(f"Website rejected by validator: {website}")
-            return "", False, None
+            # We wont return now because we can still find a valid website.
+            website_valid = False
 
         existing = contact_repository.get_contact_by_domain(website)
-        if existing:
+        if existing and website_valid:
             logger.info("Website domain already in DB; reusing stored fields")
             _populate_from_db(existing, csv)
-            return website, False, None
-
-        return website, True, None
+            return website, False, None, None
+        if website_valid:
+            return website, True, None, None
 
     # No URL from CSV – try Google search by company name
-    if not validator.skip_website_search and csv.name:
+    search_social_links: Optional[Dict[str, Set[str]]] = None
+    if not validator.skip_website_search and (csv.name):
         search_query = ""
         if type == "person":
             if csv.fullname:
@@ -282,6 +288,15 @@ def _resolve_website(
             candidates.append(local_panel["website"])
         candidates.extend(urls)
 
+        # Extract social links from ALL candidates (including excluded domains)
+        if candidates:
+            search_social_links = extract_social_links_from_urls(candidates)
+            if search_social_links:
+                logger.info(
+                    f"Social links found in search candidates: "
+                    f"{', '.join(f'{k}={len(v)}' for k, v in search_social_links.items())}"
+                )
+
         for candidate in candidates:
             if validator.validate_website(candidate):
                 logger.info(f"Website search SUCCESS: '{candidate}'")
@@ -289,10 +304,10 @@ def _resolve_website(
                 if existing:
                     logger.info("Website domain (search result) already in DB; reusing stored fields")
                     _populate_from_db(existing, csv)
-                    return candidate, False, local_panel
-                return candidate, True, local_panel
+                    return candidate, False, local_panel, search_social_links
+                return candidate, True, local_panel, search_social_links
 
-    return "", False, None
+    return "", False, None, search_social_links
 
 
 # ---------------------------------------------------------------------------
@@ -798,6 +813,7 @@ def _enrich_company_contact(
     scraped_company: ScrapedWebData = scraped
     needs_scraping_company = False
     from_cache = False
+    company_search_social_links: Optional[Dict[str, Set[str]]] = None
 
     if company_cache is not None and cache_key and cache_key in company_cache:
         cached_entry = company_cache[cache_key]
@@ -810,7 +826,7 @@ def _enrich_company_contact(
         scraped_company = ScrapedWebData.from_dict(cached_entry.get("scraped", {}))
         from_cache = True
     else:
-        website_company, needs_scraping_company, company_local_panel = _resolve_website(csv, validator, type="company")
+        website_company, needs_scraping_company, company_local_panel, company_search_social_links = _resolve_website(csv, validator, type="company")
 
         if not website_company:
             if company_cache is not None and cache_key:
@@ -827,6 +843,14 @@ def _enrich_company_contact(
             scraped_company = _scrape_website(website_company, validator)
         else:
             scraped_company = scraped
+
+        # Merge social links discovered in company Google search candidates
+        if company_search_social_links:
+            if scraped_company.social_links:
+                for platform, urls in company_search_social_links.items():
+                    scraped_company.social_links.setdefault(platform, set()).update(urls)
+            else:
+                scraped_company.social_links = company_search_social_links
 
     if company_cache is not None and cache_key and not from_cache:
         company_cache[cache_key] = {
@@ -936,7 +960,7 @@ def _process_contact_row(
     # 4. Resolve website (DB dedup + optional Google search)
     #    Back-fills csv fields from DB when domain already known.
     # ------------------------------------------------------------------
-    website, needs_scraping, person_local_panel = _resolve_website(csv, validator, type="person")
+    website, needs_scraping, person_local_panel, search_social_links = _resolve_website(csv, validator, type="person")
 
     # ------------------------------------------------------------------
     # 5. Scrape the website once (shared by both person + company paths)
@@ -945,6 +969,14 @@ def _process_contact_row(
 
     if needs_scraping:
         scraped = _scrape_website(website, validator)
+
+    # Merge social links discovered in Google search candidates (e.g. LinkedIn)
+    if search_social_links:
+        if scraped.social_links:
+            for platform, urls in search_social_links.items():
+                scraped.social_links.setdefault(platform, set()).update(urls)
+        else:
+            scraped.social_links = search_social_links
 
     # ------------------------------------------------------------------
     # 6. Enrich person contact
@@ -1123,9 +1155,18 @@ def process_database_seeding(
             sep=config.csv_separator,
             dtype=str,
             encoding="utf-8",
+            on_bad_lines="skip",
         )
         stats["total_rows"] = len(contacts_df)
         logger.info(f"Loaded {stats['total_rows']} contacts")
+
+        # Insert synthetic warmup row at the top to prime the browser
+        _warmup_row = {col: "" for col in contacts_df.columns}
+        _warmup_row[contacts_df.columns[0]] = "__WARMUP__"
+        warmup = pd.DataFrame([_warmup_row])
+        contacts_df = pd.concat([warmup, contacts_df], ignore_index=True)
+        stats["total_rows"] = len(contacts_df) - 1
+        logger.info("Inserted synthetic warmup row at index 0")
     except Exception as exc:
         logger.error(f"Failed to load CSV: {exc}")
         stats["errors"].append(f"CSV loading failed: {exc}")
@@ -1185,7 +1226,11 @@ def process_database_seeding(
                 job_store.update(job_id, "status", "paused")
                 raise JobInterruptionRequested("pause")
 
-            stats["processed"] += 1
+            is_warmup = (row_number == 1)
+            if not is_warmup:
+                stats["processed"] += 1
+            else:
+                logger.info("Processing synthetic warmup row...")
 
             try:
                 contact_data, row_stats, extra_contacts = _process_contact_row(
@@ -1202,6 +1247,10 @@ def process_database_seeding(
                     validator=validator,
                     company_cache=company_cache,
                 )
+
+                if is_warmup:
+                    logger.info("Warmup row completed, discarding results")
+                    continue
 
                 _merge_row_stats(stats, row_stats)
 
