@@ -1,20 +1,20 @@
 """Google search automation utilities"""
 
-import logging
 import random
 import unicodedata
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qs, quote_plus, urlparse
+from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup
-
+import time
 from ..utils.url_utils import validate_website_http
 from .web_scraper import NoDriverDriver
 from api.services.utils.log_socket import get_seeding_logger
 
 logger = get_seeding_logger()
 
-_SEARCH_FIELD_SELECTOR = 'textarea[name="q"], input[name="q"], #APjFqb'
+_SEARCH_FIELD_SELECTOR = '#APjFqb'
+_SUBMIT_BUTTON_SELECTOR = 'input.gNO89b'
 
 _LOCAL_ACTION_MAP: Dict[str, str] = {
     "website": "website",
@@ -113,21 +113,19 @@ class GoogleSearcher:
         )
         self.driver.run(self.driver.tab.sleep(random.uniform(0.5, 0.8)))
 
-        if not self._type_query(query):
-            logger.debug("Typing failed – falling back to direct URL navigation")
-            self.driver.run(
-                self.driver.tab.get(
-                    f"https://www.google.com/search?q={quote_plus(query)}"
-                ),
-                timeout_seconds=self.page_load_timeout_seconds,
-            )
+        if self._type_query(query):
+            # If this dont work early return
+            return ""  # Empty result, but not a failure
 
         self._accept_cookies()
         self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
 
         if self._google_captcha_detected():
-            logger.warning("⚠️ Google CAPTCHA detected — search aborted")
-            return None
+            logger.warning("⚠️ Google CAPTCHA detected — waiting for manual resolution…")
+            
+            while self._google_captcha_detected():
+                time.sleep(2)
+            logger.info("✅ CAPTCHA resolved — continuing search")
 
         html = str(
             self.driver.run(
@@ -187,7 +185,7 @@ class GoogleSearcher:
             self.driver.run(self.driver.tab.sleep(random.uniform(0.2, 0.4)))
 
             button = self.driver.run(
-                self.driver.tab.select('input[name="btnK"]', timeout=1)
+                self.driver.tab.select(_SUBMIT_BUTTON_SELECTOR, timeout=1)
             )
             if not button:
                 return False
@@ -285,7 +283,7 @@ class GoogleSearcher:
                 if phone_el:
                     phone = (phone_el.get("data-phone-number") or "").strip()
                     if phone:
-                        actions[key] = phone
+                        actions["phone"] = phone
                 continue
 
             link = block.select_one("a[href]")
@@ -301,7 +299,17 @@ class GoogleSearcher:
                 actions[key] = href
             elif href.startswith("/"):
                 actions[key] = f"https://www.google.com{href}"
+        
+        # Extract the address field
+        container = root.select_one('[data-attrid="kc:/location/location:address"]')
 
+        if container:
+            address_el = container.select_one("span.LrzXr")
+            if address_el:
+                address = address_el.get_text(strip=True)   
+                if address:
+                        actions["address"] = address
+                        
         return actions
 
     def refresh_excluded(self , excluded_domains , generic_domains) -> None:

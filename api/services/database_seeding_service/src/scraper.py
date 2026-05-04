@@ -205,30 +205,31 @@ def _resolve_website(
     csv: CsvRow,
     validator: WebsiteEmailValidator,
     type : Literal["person", "company"] = "person"
-) -> Tuple[str, bool]:
+) -> Tuple[str, bool, Optional[Dict[str, str]]]:
     """
-    Return *(resolved_url, needs_scraping)*.
+    Return *(resolved_url, needs_scraping, local_panel)*.
 
     Checks in order:
       1. CSV-provided URL → validate → DB dedup check
       2. Google search by company name → validate → DB dedup check
 
     Back-fills *csv* from DB when the domain already exists.
+    local_panel contains Google My Business data (phone, directions, etc.) if available.
     """
     website = csv.website
 
     if website:
         if not validator.validate_website(website):
             logger.info(f"Website rejected by validator: {website}")
-            return "", False
+            return "", False, None
 
         existing = contact_repository.get_contact_by_domain(website)
         if existing:
             logger.info("Website domain already in DB; reusing stored fields")
             _populate_from_db(existing, csv)
-            return website, False
+            return website, False, None
 
-        return website, True
+        return website, True, None
 
     # No URL from CSV – try Google search by company name
     if not validator.skip_website_search and csv.name:
@@ -256,10 +257,10 @@ def _resolve_website(
                 if existing:
                     logger.info("Website domain (search result) already in DB; reusing stored fields")
                     _populate_from_db(existing, csv)
-                    return candidate, False
-                return candidate, True
+                    return candidate, False, local_panel
+                return candidate, True, local_panel
 
-    return "", False
+    return "", False, None
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +355,7 @@ def _enrich_person(
     mx_cache: Dict,
     new_mx_records: List,
     row_stats: RowStats,
+    local_panel: Optional[Dict[str, str]] = None,
 ) -> PersonContactData:
     """
     Build a fully-enriched :class:`PersonContactData` for the person identity
@@ -404,6 +406,16 @@ def _enrich_person(
         person.country = scraped.country
     if not person.address and scraped.location:
         person.address = scraped.location
+
+    # --- Fill gaps from Google local panel (never overwrite CSV values) ------
+    if local_panel:
+        if not person.phone and local_panel.get("phone"):
+            person.phone = local_panel["phone"]
+            logger.info(f"Phone from Google local panel: '{person.phone}'")
+        if not person.address and local_panel.get("address"):
+            person.address = local_panel["address"]
+            logger.info(f"Address from Google local panel: '{person.address}'")
+
     # --- Social links ------------------------------------------------------
     if scraped.social_links:
         social_links = {platform: list(urls) for platform, urls in scraped.social_links.items()}
@@ -582,6 +594,7 @@ def _enrich_company(
     site_builder_domains: Set[str],
     mx_cache: Dict,
     new_mx_records: List,
+    local_panel: Optional[Dict[str, str]] = None,
 ) -> Optional[CompanyContactData]:
     """
     Build a :class:`CompanyContactData` record for the company associated with
@@ -628,6 +641,15 @@ def _enrich_company(
         company.country = scraped.country
     if not company.address and scraped.location:
         company.address = scraped.location
+
+    # --- Fill gaps from Google local panel (never overwrite CSV values) ------
+    if local_panel:
+        if not company.phone and local_panel.get("phone"):
+            company.phone = local_panel["phone"]
+            logger.info(f"Company phone from Google local panel: '{company.phone}'")
+        if not company.address and local_panel.get("address"):
+            company.address = local_panel["address"]
+            logger.info(f"Company address from Google local panel: '{company.address}'")
 
     # --- Social links ------------------------------------------------------
     if scraped.social_links:
@@ -732,7 +754,7 @@ def _enrich_company_contact(
     enriched: List[Tuple] = []
     company_linkedin: Optional[str] = None
 
-    website_company, needs_scraping_company = _resolve_website(csv, validator, type="company")
+    website_company, needs_scraping_company, company_local_panel = _resolve_website(csv, validator, type="company")
 
     if not needs_scraping_company:
         return enriched, company_linkedin
@@ -754,6 +776,7 @@ def _enrich_company_contact(
         site_builder_domains=site_builder_domains,
         mx_cache=mx_cache,
         new_mx_records=new_mx_records,
+        local_panel=company_local_panel,
     )
     if company is not None:
         enriched.append(company.to_tuple())
@@ -841,7 +864,7 @@ def _process_contact_row(
     # 4. Resolve website (DB dedup + optional Google search)
     #    Back-fills csv fields from DB when domain already known.
     # ------------------------------------------------------------------
-    website, needs_scraping = _resolve_website(csv, validator, type="person")
+    website, needs_scraping, person_local_panel = _resolve_website(csv, validator, type="person")
 
     # ------------------------------------------------------------------
     # 5. Scrape the website once (shared by both person + company paths)
@@ -870,6 +893,7 @@ def _process_contact_row(
             mx_cache=mx_cache,
             new_mx_records=new_mx_records,
             row_stats=row_stats,
+            local_panel=person_local_panel,
         )
     main_email = person.email if person.email and "@" in person.email else None
     extra_emails = [e for e in scraped.emails if e != main_email]
