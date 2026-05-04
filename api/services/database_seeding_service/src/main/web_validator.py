@@ -31,7 +31,7 @@ class WebsiteEmailValidator:
     def __init__(
         self,
         skip_website_search: bool = False,
-        site_timeout_seconds: int = 30,
+        site_timeout_seconds: int = 12,
     ):
         self.skip_website_search = skip_website_search
         self.site_timeout_seconds = site_timeout_seconds
@@ -61,12 +61,12 @@ class WebsiteEmailValidator:
             self.driver,
             excluded_domains=list(self.not_visiting_domains),
             site_timeout_seconds=self.site_timeout_seconds,
-            page_load_timeout_seconds=45,
+            page_load_timeout_seconds=18,
         )
         self.searcher = GoogleSearcher(
             self.driver,
             site_timeout_seconds=self.site_timeout_seconds,
-            page_load_timeout_seconds=45,
+            page_load_timeout_seconds=18,
         )
 
         self.searcher.refresh_excluded(self.not_visiting_domains , self.generic_domains)

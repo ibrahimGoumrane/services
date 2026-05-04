@@ -125,7 +125,7 @@ class NoDriverDriver:
                     if tab is None:
                         continue
                     try:
-                        self.run(tab.close() , timeout_seconds=2.0)
+                        self.run(tab.close() , timeout_seconds=1.0)
                     except Exception:
                         logger.warning("Error occurred while closing a tab during quit")
                 try:
@@ -152,7 +152,7 @@ class NoDriverDriver:
                         self._loop.run_until_complete(
                              asyncio.wait_for(
                                 asyncio.gather(*pending, return_exceptions=True),
-                                timeout=3.0
+                                timeout=1.5
                             )
                         )
                 except asyncio.TimeoutError:

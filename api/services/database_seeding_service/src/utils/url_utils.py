@@ -122,7 +122,7 @@ def is_excluded_domain(url: str, excluded_domains: list) -> bool:
 
 def validate_website_http(
     url: str,
-    timeout: int = 3,
+    timeout: int = 1.5,
     allow_pdf: bool = False,
     excluded_domains: list[str] | None = None,
 ) -> bool:

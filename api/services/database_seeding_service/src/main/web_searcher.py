@@ -57,8 +57,8 @@ class GoogleSearcher:
     def __init__(
         self,
         driver: NoDriverDriver,
-        site_timeout_seconds: int = 20,
-        page_load_timeout_seconds: int = 45,
+        site_timeout_seconds: int = 8,
+        page_load_timeout_seconds: int = 18,
     ) -> None:
         self.driver = driver
         self.site_timeout_seconds = site_timeout_seconds
@@ -123,20 +123,20 @@ class GoogleSearcher:
             self.driver.tab.get("https://www.google.com"),
             timeout_seconds=self.page_load_timeout_seconds,
         )
-        self.driver.run(self.driver.tab.sleep(random.uniform(0.5, 0.8)))
+        self.driver.run(self.driver.tab.sleep(random.uniform(0.2, 0.35)))
 
         if not self._type_query(query):
             # If this dont work early return
             raise WebsearchFailure("Failed to submit search query , Verify selectors and page structure")
 
         self._accept_cookies()
-        self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
+        self.driver.run(self.driver.tab.sleep(random.uniform(0.4, 0.6)))
 
         if self._google_captcha_detected():
             logger.warning("⚠️ Google CAPTCHA detected — waiting for manual resolution…")
             
             while self._google_captcha_detected():
-                time.sleep(2)
+                time.sleep(0.8)
             logger.info("✅ CAPTCHA resolved — continuing search")
 
         html = str(
@@ -160,7 +160,7 @@ class GoogleSearcher:
         for phrase in _GOOGLE_CAPTCHA_PHRASES:
             try:
                 match = self.driver.run(
-                    self.driver.tab.find(phrase, best_match=True, timeout=1)
+                    self.driver.tab.find(phrase, best_match=True, timeout=0.5)
                 )
                 if match:
                     logger.warning(f"CAPTCHA phrase found: {phrase!r}")
@@ -180,30 +180,30 @@ class GoogleSearcher:
             return False
         try:
             field = self.driver.run(
-                self.driver.tab.select(_SEARCH_FIELD_SELECTOR, timeout=3)
+                self.driver.tab.select(_SEARCH_FIELD_SELECTOR, timeout=1.5)
             )
             if not field:
                 return False
 
-            self.driver.run(self.driver.tab.sleep(random.uniform(0.1, 0.2)))
+            self.driver.run(self.driver.tab.sleep(random.uniform(0.05, 0.1)))
 
             for char in query:
                 self.driver.run(field.send_keys(char))
-                delay = random.uniform(0.02, 0.08)
+                delay = random.uniform(0.01, 0.03)
                 if random.random() < 0.08:
-                    delay += random.uniform(0.1, 0.2)
+                    delay += random.uniform(0.05, 0.1)
                 self.driver.run(self.driver.tab.sleep(delay))
 
-            self.driver.run(self.driver.tab.sleep(random.uniform(0.2, 0.4)))
+            self.driver.run(self.driver.tab.sleep(random.uniform(0.1, 0.2)))
 
             button = self.driver.run(
-                self.driver.tab.select(_SUBMIT_BUTTON_SELECTOR, timeout=1)
+                self.driver.tab.select(_SUBMIT_BUTTON_SELECTOR, timeout=0.5)
             )
             if not button:
                 return False
 
             self.driver.run(button.mouse_move())
-            self.driver.run(self.driver.tab.sleep(random.uniform(0.05, 0.15)))
+            self.driver.run(self.driver.tab.sleep(random.uniform(0.02, 0.06)))
             self.driver.run(button.mouse_click())
             return True
 
@@ -220,18 +220,18 @@ class GoogleSearcher:
         try:
             btn = (
                 self.driver.run(
-                    self.driver.tab.find("accept all", best_match=True, timeout=1)
+                    self.driver.tab.find("accept all", best_match=True, timeout=0.5)
                 )
                 or self.driver.run(
-                    self.driver.tab.find("accept", best_match=True, timeout=1)
+                    self.driver.tab.find("accept", best_match=True, timeout=0.5)
                 )
             )
             if btn:
                 self.driver.run(btn.mouse_move())
-                self.driver.run(self.driver.tab.sleep(random.uniform(0.05, 0.15)))
+                self.driver.run(self.driver.tab.sleep(random.uniform(0.02, 0.06)))
                 self.driver.run(btn.mouse_click())
                 logger.info("✓ Accepted Google cookies")
-                self.driver.run(self.driver.tab.sleep(0.3))
+                self.driver.run(self.driver.tab.sleep(0.12))
         except Exception as exc:
             logger.debug(f"Cookie banner: {exc}")
 

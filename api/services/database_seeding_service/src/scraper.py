@@ -24,7 +24,7 @@ from api.services.database_seeding_service.src.utils.extractor_social_media impo
 from api.services.database_seeding_service.src.utils.exceptions import JobInterruptionRequested, WebsearchFailure
 logger = get_logger(__name__)
 
-SITE_TIMEOUT_SECONDS = 30
+SITE_TIMEOUT_SECONDS = 12
 PERIODIC_BROWSER_RESTART_BATCHES = 100
 _COMPANY_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "tmp", "company")
 COMPANY_CACHE_FILE = os.path.join(_COMPANY_CACHE_DIR, "company_cache.json")

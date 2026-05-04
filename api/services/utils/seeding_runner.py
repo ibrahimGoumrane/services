@@ -2,6 +2,7 @@ import asyncio
 
 from api.services.database_seeding_service import seed_database, seed_single_url
 from api.services.database_seeding_service.src.models import ProcessingConfig
+from api.services.database_seeding_service.src.utils.exceptions import JobInterruptionRequested
 from api.services.utils.job_manager import job_store
 from api.services.utils.log_socket import websocket_log_stream
 from api.services.utils.ws_manager import ws_manager
@@ -58,6 +59,14 @@ async def run_seed_job(job_id: str) -> None:
             if paused_job is not None:
                 await ws_manager.send_event(job_id, "paused", paused_job.to_dict())
             raise  # must re-raise so asyncio knows the task is done
+
+        except JobInterruptionRequested:
+            # Job was paused intentionally by the scraper (e.g. checkpoint pause).
+            # Status is already set to paused; just broadcast the state.
+            paused_job = job_store.get_job(job_id)
+            if paused_job is not None:
+                await ws_manager.send_event(job_id, "paused", paused_job.to_dict())
+            return
 
         except Exception as exc:
             seeding_logger.error(f"Job {job_id} failed with error: {exc}")
