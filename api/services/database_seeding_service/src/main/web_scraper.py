@@ -36,10 +36,6 @@ class PageScraper:
         """
         logger.info(f"[scrape] start url={url}")
 
-        if not self._http_ok(url):
-            logger.warning(f"✗ Pre-validation failed: {url}")
-            return ""
-
         if not self.driver.tab:
             raise RuntimeError("Driver tab not initialized. Call setup() first.")
 
@@ -62,14 +58,6 @@ class PageScraper:
         logger.info(f"[scrape] content length={len(html)} url={url}")
         return html
 
-    # ── Private: validation ────────────────────────────────────────────────
-
-    def _http_ok(self, url: str) -> bool:
-        if not url:
-            return False
-        return validate_website_http(
-            url, timeout=3, excluded_domains=self.excluded_domains
-        )
 
     # ── Private: anti-detection behaviour ─────────────────────────────────
 
