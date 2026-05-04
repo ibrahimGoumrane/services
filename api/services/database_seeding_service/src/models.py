@@ -184,3 +184,32 @@ class ScrapedWebData:
     social_links: Dict[str, List[str]] = field(default_factory=dict)
     person_name: Optional[str] = None
     company_name: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "emails": self.emails,
+            "phones": self.phones,
+            "contact_page": self.contact_page,
+            "location": self.location,
+            "city": self.city,
+            "country": self.country,
+            "zip_code": self.zip_code,
+            "social_links": {k: list(v) for k, v in self.social_links.items()},
+            "person_name": self.person_name,
+            "company_name": self.company_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ScrapedWebData":
+        return cls(
+            emails=data.get("emails", []),
+            phones=data.get("phones", []),
+            contact_page=data.get("contact_page"),
+            location=data.get("location"),
+            city=data.get("city"),
+            country=data.get("country"),
+            zip_code=data.get("zip_code"),
+            social_links=data.get("social_links", {}),
+            person_name=data.get("person_name"),
+            company_name=data.get("company_name"),
+        )

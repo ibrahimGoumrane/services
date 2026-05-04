@@ -1,8 +1,9 @@
 """Data access layer for contact and related database operations"""
 
+import os
 from typing import List, Optional, Tuple
 
-import mysql.connector
+from mysql.connector import pooling
 
 from .url_utils import extract_domain
 
@@ -41,22 +42,39 @@ CONTACT_COLUMNS = [
     "calendly",
 ]
 
+CONTACT_COLUMNS_MAP = {name: idx for idx, name in enumerate(CONTACT_COLUMNS)}
+
 CONTACT_COLUMNS_SQL = ", ".join(CONTACT_COLUMNS)
 CONTACT_VALUES_SQL = ", ".join(["%s"] * len(CONTACT_COLUMNS))
 
 
-# ── Connection ──────────────────────────────────────────────────────────
+# ── Connection pool ──────────────────────────────────────────────────────
+
+_DB_CONFIG = {
+    "host": os.environ.get("DB_HOST", "169.61.75.4"),
+    "user": os.environ.get("DB_USER", "finandus_maut672"),
+    "password": os.environ.get("DB_PASSWORD", "(pp5(Km68(0)1vS-"),
+    "database": os.environ.get("DB_NAME", "finandus_maut672"),
+}
+
+_connection_pool: Optional[pooling.MySQLConnectionPool] = None
+
+
+def _get_pool() -> pooling.MySQLConnectionPool:
+    global _connection_pool
+    if _connection_pool is None:
+        _connection_pool = pooling.MySQLConnectionPool(
+            pool_name="seeding_pool",
+            pool_size=5,
+            pool_recycle=3600,
+            **_DB_CONFIG,
+        )
+    return _connection_pool
 
 
 def get_connection():
-    """Establish and return MySQL database connection"""
-    return mysql.connector.connect(
-        host="169.61.75.4",
-        user="finandus_maut672",
-        password="(pp5(Km68(0)1vS-",
-        database="finandus_maut672",
-    )
-
+    """Get a connection from the pool."""
+    return _get_pool().get_connection()
 
 # ── Generic helpers ─────────────────────────────────────────────────────
 

@@ -1,5 +1,7 @@
 """Main CSV processing and database seeding orchestrator."""
 
+import json
+import os
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Set, Tuple , Literal
@@ -13,15 +15,18 @@ from api.services.utils.job_manager import job_store
 from api.models import CsvMapping
 from api.services.database_seeding_service.src.models import ProcessingConfig
 from api.services.database_seeding_service.src.utils import contact_repository, data_transformers, email_classifiers, mx_resolver
+from api.services.database_seeding_service.src.utils.contact_repository import CONTACT_COLUMNS_MAP
 from api.services.utils.logging_config import flush_buffered_log_handlers, get_logger, setup_logging
 from api.services.database_seeding_service.src.utils.tld_country_mapper import get_country_from_email_domain
 from api.services.database_seeding_service.src.utils.url_utils import extract_domain
 from api.services.database_seeding_service.src.main.web_validator import WebsiteEmailValidator
-
+from api.services.database_seeding_service.src.utils.exception import JobInterruptionRequested, WebsearchFailure
 logger = get_logger(__name__)
 
 SITE_TIMEOUT_SECONDS = 30
 PERIODIC_BROWSER_RESTART_BATCHES = 100
+_COMPANY_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "tmp", "company")
+COMPANY_CACHE_FILE = os.path.join(_COMPANY_CACHE_DIR, "company_cache.json")
 
 
 
@@ -91,8 +96,23 @@ def _merge_row_stats(stats: Dict[str, Any], row_stats: RowStats) -> None:
         stats["synthetic_emails_created"] += 1
 
 
-class JobInterruptionRequested(Exception):
-    """Raised when a pause/stop signal is detected during row processing."""
+def _load_company_cache() -> Dict[str, dict]:
+    try:
+        if os.path.exists(COMPANY_CACHE_FILE):
+            with open(COMPANY_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as exc:
+        logger.debug(f"Failed to load company cache: {exc}")
+    return {}
+
+
+def _save_company_cache(cache: Dict[str, dict]) -> None:
+    try:
+        os.makedirs(_COMPANY_CACHE_DIR, exist_ok=True)
+        with open(COMPANY_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        logger.debug(f"Failed to save company cache: {exc}")
 
 
 
@@ -175,26 +195,38 @@ def _populate_from_db(
     """
     Back-fill empty fields on *csv* from an existing DB record.
     Never overwrites values that already came from the CSV.
+    Uses CONTACT_COLUMNS_MAP for named index access instead of magic numbers.
     """
-    if db_row[0] and not csv.email:
-        db_email = str(db_row[0]).strip().lower()
-        # Avoid clobbering a real person row with a postmaster fallback.
+    def _col(name: str):
+        idx = CONTACT_COLUMNS_MAP[name]
+        return db_row[idx] if idx < len(db_row) else None
+
+    db_email = _col("email")
+    if db_email and not csv.email:
+        db_email = str(db_email).strip().lower()
         if not (db_email.startswith("postmaster") and (csv.fname or csv.lname or csv.fullname or csv.name)):
             csv.email = db_email
-    if db_row[6] and not csv.phone:
-        csv.phone = db_row[6]
-    if db_row[7] and not csv.mobile:
-        csv.mobile = db_row[7]
-    if db_row[8] and not csv.fax:
-        csv.fax = db_row[8]
-    if db_row[14] and not csv.contact_form_url:
-        csv.contact_form_url = db_row[14]
-    if db_row[15] and not csv.linkedin:
-        csv.linkedin = str(db_row[15]).strip() or None
-    if db_row[11] and not csv.city:
-        csv.city = str(db_row[11]).strip()
-    if db_row[13] and not csv.country:
-        csv.country = str(db_row[13]).strip()
+    db_phone = _col("phone")
+    if db_phone and not csv.phone:
+        csv.phone = db_phone
+    db_mobile = _col("mobile")
+    if db_mobile and not csv.mobile:
+        csv.mobile = db_mobile
+    db_fax = _col("fax")
+    if db_fax and not csv.fax:
+        csv.fax = db_fax
+    db_contact_form = _col("urlcontactform")
+    if db_contact_form and not csv.contact_form_url:
+        csv.contact_form_url = db_contact_form
+    db_linkedin = _col("linkedin")
+    if db_linkedin and not csv.linkedin:
+        csv.linkedin = str(db_linkedin).strip() or None
+    db_city = _col("city")
+    if db_city and not csv.city:
+        csv.city = str(db_city).strip()
+    db_country = _col("country")
+    if db_country and not csv.country:
+        csv.country = str(db_country).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -750,20 +782,59 @@ def _enrich_company_contact(
     site_builder_domains: Set[str],
     mx_cache: Dict,
     new_mx_records: List,
+    company_cache: Optional[Dict[str, dict]] = None,
 ) -> Tuple[List[Tuple], Optional[str]]:
     enriched: List[Tuple] = []
     company_linkedin: Optional[str] = None
 
-    website_company, needs_scraping_company, company_local_panel = _resolve_website(csv, validator, type="company")
-
-    if not needs_scraping_company:
+    if not csv.name and not csv.website:
+        logger.debug("Skipping company enrichment: no company name or website")
         return enriched, company_linkedin
 
-    if website_company != person_website:
-        logger.info(f"Company website resolved to a different URL than the person website; scraping separately: '{website_company}'")
-        scraped_company = _scrape_website(website_company, validator)
+    cache_key = (csv.name or "").strip().lower()
+
+    website_company: str = ""
+    company_local_panel: Optional[Dict[str, str]] = None
+    scraped_company: ScrapedWebData = scraped
+    needs_scraping_company = False
+    from_cache = False
+
+    if company_cache is not None and cache_key and cache_key in company_cache:
+        cached_entry = company_cache[cache_key]
+        if cached_entry is None:
+            logger.debug(f"Company cache hit (no website found): '{csv.name}'")
+            return enriched, company_linkedin
+        logger.info(f"Company cache hit for '{csv.name}' -> '{cached_entry.get('website')}'")
+        website_company = cached_entry["website"]
+        company_local_panel = cached_entry.get("local_panel")
+        scraped_company = ScrapedWebData.from_dict(cached_entry.get("scraped", {}))
+        from_cache = True
     else:
-        scraped_company = scraped
+        website_company, needs_scraping_company, company_local_panel = _resolve_website(csv, validator, type="company")
+
+        if not website_company:
+            if company_cache is not None and cache_key:
+                company_cache[cache_key] = None
+                logger.debug(f"Company cache miss (no website found): '{csv.name}'")
+            return enriched, company_linkedin
+
+        if not needs_scraping_company:
+            return enriched, company_linkedin
+
+    if not from_cache:
+        if website_company != person_website:
+            logger.info(f"Company website resolved to a different URL than the person website; scraping separately: '{website_company}'")
+            scraped_company = _scrape_website(website_company, validator)
+        else:
+            scraped_company = scraped
+
+    if company_cache is not None and cache_key and not from_cache:
+        company_cache[cache_key] = {
+            "website": website_company,
+            "local_panel": company_local_panel,
+            "scraped": scraped_company.to_dict(),
+        }
+        logger.debug(f"Company cache stored: '{csv.name}' -> '{website_company}'")
 
     company = _enrich_company(
         csv=csv,
@@ -832,6 +903,7 @@ def _process_contact_row(
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]],
     new_mx_records: List[Tuple[str, str, str]],
     validator: WebsiteEmailValidator,
+    company_cache: Optional[Dict[str, str]] = None,
 ) -> Tuple[Optional[Tuple], RowStats, List[Tuple]]:
     """
     Process one CSV row and return:
@@ -926,6 +998,7 @@ def _process_contact_row(
         site_builder_domains=site_builder_domains,
         mx_cache=mx_cache,
         new_mx_records=new_mx_records,
+        company_cache=company_cache,
     )
     
     if company_linkedin and not person.linkedin:
@@ -1098,6 +1171,7 @@ def process_database_seeding(
     contact_batch: List[Tuple] = []
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
     new_mx_records: List[Tuple[str, str, str]] = []
+    company_cache: Dict[str, str] = _load_company_cache()
     batches_processed = 0
     start_time = time.time()
 
@@ -1126,6 +1200,7 @@ def process_database_seeding(
                     mx_cache=mx_cache,
                     new_mx_records=new_mx_records,
                     validator=validator,
+                    company_cache=company_cache,
                 )
 
                 _merge_row_stats(stats, row_stats)
@@ -1188,8 +1263,7 @@ def process_database_seeding(
                         except Exception as exc:
                             logger.debug(f"Stray tab cleanup failed (non-fatal): {exc}")
 
-                        is_attached = bool(getattr(validator.driver, "_attach_port", None))
-                        if batches_processed % PERIODIC_BROWSER_RESTART_BATCHES == 0 and not is_attached:
+                        if batches_processed % PERIODIC_BROWSER_RESTART_BATCHES == 0:
                             try:
                                 validator.restart_browser(reason="periodic")
                                 logger.debug(f"Periodic browser restart completed at batch {batches_processed}")
@@ -1222,6 +1296,7 @@ def process_database_seeding(
                     flush_buffered_log_handlers(logger)
                     contact_batch.clear()
                     new_mx_records.clear()
+                    _save_company_cache(company_cache)
 
             except JobInterruptionRequested as exc:
                 if not job_id:
@@ -1233,6 +1308,10 @@ def process_database_seeding(
                 job_store.update(job_id, "status", "paused")
                 flush_buffered_log_handlers(logger)
                 return stats
+            except WebsearchFailure as exc:
+                logger.warning(f"Web search failure for row {stats['processed']}: {exc}")
+                stats["errors"].append(f"Row {stats['processed']}: {exc}")
+                continue
             except Exception as exc:
                 logger.warning(f"Error processing row {stats['processed']}: {exc}")
                 stats["errors"].append(f"Row {stats['processed']}: {exc}")
@@ -1242,6 +1321,8 @@ def process_database_seeding(
         if validator:
             logger.info("Closing NoDriver browser...")
             validator.quit()
+        _save_company_cache(company_cache)
+        logger.info(f"Company cache saved ({len(company_cache)} entries)")
 
     elapsed = time.time() - start_time
     logger.info(

@@ -164,22 +164,6 @@ async def resume_job(job_id: str) -> JobStatusResponse:
     return JobStatusResponse(**running_job.to_dict())
 
 
-@router.post("/jobs/{job_id}/stop", response_model=JobStatusResponse)
-async def stop_job(job_id: str) -> JobStatusResponse:
-    job = job_store.get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-
-    job_store.request_job_pause(job_id)
-    job_store.update(job_id, "progress", {"error": "Job stopped by user"})
-    stopped_job = job_store.update(job_id, "status", "paused")
-    if stopped_job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-
-    await ws_manager.send_event(job_id, "paused", stopped_job.to_dict())
-    return JobStatusResponse(**stopped_job.to_dict())
-
-
 @router.get("/jobs", response_model=list[JobStatusResponse])
 async def list_jobs() -> list[JobStatusResponse]:
     jobs = job_store.list_jobs()

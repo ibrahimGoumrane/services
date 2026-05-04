@@ -7,7 +7,9 @@ from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup
 import time
-from ..utils.url_utils import validate_website_http
+
+from api.services.database_seeding_service.src.utils.exceptions import WebsearchFailure
+from api.services.database_seeding_service.src.utils.url_utils import validate_website_http
 from .web_scraper import NoDriverDriver
 from api.services.utils.log_socket import get_seeding_logger
 
@@ -113,9 +115,9 @@ class GoogleSearcher:
         )
         self.driver.run(self.driver.tab.sleep(random.uniform(0.5, 0.8)))
 
-        if self._type_query(query):
+        if not self._type_query(query):
             # If this dont work early return
-            return ""  # Empty result, but not a failure
+            raise WebsearchFailure("Failed to submit search query , Verify selectors and page structure")
 
         self._accept_cookies()
         self.driver.run(self.driver.tab.sleep(random.uniform(1.0, 1.5)))
