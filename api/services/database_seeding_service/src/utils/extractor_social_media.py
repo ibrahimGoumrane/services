@@ -32,9 +32,8 @@ _SOCIAL_PATTERNS = {
         r"https?://vm\.tiktok\.com/[\w]+",
     ],
     "linkedin": [
-        r"https?://(?:www\.)?linkedin\.com/in/[\w-]+",
-        r"https?://(?:www\.)?linkedin\.com/company/[\w-]+",
-        r"https?://(?:www\.)?linkedin\.com/pub/[\w/-]+",
+        r"https?://(?:[\w-]+\.)*linkedin\.com/in/[\w-]+",
+        r"https?://(?:[\w-]+\.)*linkedin\.com/company/[\w-]+",
     ],
     "youtube": [
         r"https?://(?:www\.)?youtube\.com/(?:channel|c|user|@)[\w/?=&-]+",
