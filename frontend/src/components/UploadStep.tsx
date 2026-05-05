@@ -1,4 +1,4 @@
-import React, { useState, useRef, Children } from "react";
+import React, { useState, useRef } from "react";
 import {
   UploadCloud,
   FileText,
@@ -198,7 +198,7 @@ export function UploadStep({ onNext }: UploadStepProps) {
           >
             <div
               className={`relative rounded-2xl p-1 transition-all duration-300 ease-out
-                ${isDragging ? "scale-[1.02] shadow-2xl shadow-blue-500/20" : "hover:scale-[1.01]"}
+                ${isDragging ? "scale-[1.02] shadow-2xl shadow-indigo-500/20" : "hover:scale-[1.01]"}
               `}
               onDragOver={(e) => {
                 e.preventDefault();
@@ -252,7 +252,7 @@ export function UploadStep({ onNext }: UploadStepProps) {
                       }}
                       className="flex flex-col items-center gap-4 w-full max-w-sm"
                     >
-                      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/20 to-violet-500/20 flex items-center justify-center text-blue-400 border border-blue-500/20 shadow-inner">
+                      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500/20 to-cyan-500/20 flex items-center justify-center text-cyan-400 border border-cyan-500/20 shadow-inner">
                         <FileText className="w-8 h-8" />
                       </div>
                       <div className="text-center w-full">
@@ -344,7 +344,7 @@ export function UploadStep({ onNext }: UploadStepProps) {
                   value={csvText}
                   onChange={(e) => handleTextInput(e.target.value)}
                   placeholder="Paste your CSV data here. Example:&#10;name,email,company&#10;John Doe,john@example.com,ACME Corp&#10;Jane Smith,jane@example.com,Tech Inc"
-                  className="w-full h-48 bg-slate-950 border border-slate-700 rounded-lg p-4 text-slate-200 placeholder-slate-600 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 resize-none transition-all"
+                  className="w-full h-48 bg-slate-950 border border-slate-700 rounded-lg p-4 text-slate-200 placeholder-slate-600 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 resize-none transition-all"
                 />
                 <p className="text-xs text-slate-500 mt-2">
                   {csvText.length} characters
@@ -389,7 +389,7 @@ export function UploadStep({ onNext }: UploadStepProps) {
                 <select
                   value={separator}
                   onChange={handleSeparatorChange}
-                  className="appearance-none bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-4 pr-10 py-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition-all shadow-inner min-w-[160px]"
+                  className="appearance-none bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-4 pr-10 py-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all shadow-inner min-w-[160px]"
                 >
                   {SEPARATORS.map((s) => (
                     <option key={s.value} value={s.value}>
@@ -411,7 +411,7 @@ export function UploadStep({ onNext }: UploadStepProps) {
                   Detected Headers
                 </h3>
                 {isLoading && (
-                  <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
                 )}
               </div>
 
@@ -477,7 +477,7 @@ export function UploadStep({ onNext }: UploadStepProps) {
             const input = inputMode === "file" ? file! : csvText;
             onNext(input, separator, headers);
           }}
-          className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-violet-500 text-white px-6 py-3 rounded-xl font-semibold text-sm shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transition-all"
+          className="flex items-center gap-2 bg-gradient-to-r from-indigo-500 to-cyan-500 text-white px-6 py-3 rounded-xl font-semibold text-sm shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transition-all"
         >
           Continue to Mapping
           <ChevronRight className="w-4 h-4" />

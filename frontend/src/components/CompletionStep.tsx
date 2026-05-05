@@ -204,7 +204,7 @@ export function CompletionStep({
             variants={itemVariants}
             className="w-full bg-slate-900/70 border border-slate-700/70 rounded-2xl p-6 mb-10 text-left"
           >
-            <h4 className="text-sm font-bold tracking-wide uppercase text-violet-300 mb-4">
+            <h4 className="text-sm font-bold tracking-wide uppercase text-indigo-300 mb-4">
               URL Scraping Result
             </h4>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -256,7 +256,7 @@ export function CompletionStep({
               scale: 0.98,
             }}
             onClick={onReset}
-            className={`w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-semibold text-sm shadow-lg transition-all ${isSuccess ? "bg-gradient-to-r from-blue-500 to-violet-500 text-white shadow-violet-500/25 hover:shadow-violet-500/40" : "bg-slate-100 text-slate-900 hover:bg-white shadow-white/10"}`}
+            className={`w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl font-semibold text-sm shadow-lg transition-all ${isSuccess ? "bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-indigo-500/25 hover:shadow-indigo-500/40" : "bg-slate-100 text-slate-900 hover:bg-white shadow-white/10"}`}
           >
             {isSuccess ? (
               <>

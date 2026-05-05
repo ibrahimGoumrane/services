@@ -236,7 +236,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
                 e.target.value as FieldMappingMode,
               )
             }
-            className={`w-full text-xs font-medium rounded-lg px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition-all ${
+            className={`w-full text-xs font-medium rounded-lg px-3 py-2 border focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all ${
               state.mode === "skip"
                 ? "bg-slate-800 border-slate-600 text-slate-400"
                 : state.mode === "default"
@@ -256,7 +256,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
               <select
                 value={state.column}
                 onChange={(e) => handleColumnChange(field.id, e.target.value)}
-                className="w-full appearance-none bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-4 pr-10 py-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500 transition-all shadow-inner"
+                className="w-full appearance-none bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-4 pr-10 py-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all shadow-inner"
               >
                 <option value="" disabled>
                   Select column...
@@ -281,7 +281,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
                 handleDefaultValueChange(field.id, e.target.value)
               }
               placeholder="Enter default value..."
-              className="w-full bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl px-4 py-2.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500 transition-all shadow-inner"
+              className="w-full bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl px-4 py-2.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all shadow-inner"
             />
           )}
 
@@ -376,7 +376,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
                       });
                     }}
                     placeholder="Enter value..."
-                    className="flex-1 bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl px-4 py-2.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500 transition-all shadow-inner"
+                    className="flex-1 bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl px-4 py-2.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all shadow-inner"
                   />
                 </div>
               )}
@@ -453,7 +453,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
                       batchSize: parseInt(e.target.value) || 100,
                     }))
                   }
-                  className="bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl px-4 py-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500 transition-all shadow-inner"
+                  className="bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl px-4 py-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all shadow-inner"
                 />
               </div>
 
@@ -475,7 +475,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
                       }))
                     }
                   />
-                  <div className="w-11 h-6 bg-slate-800 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-blue-500 peer-checked:to-violet-500 peer-checked:border-transparent"></div>
+                  <div className="w-11 h-6 bg-slate-800 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-cyan-500 peer-checked:border-transparent"></div>
                 </div>
               </label>
 
@@ -495,7 +495,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
                       }))
                     }
                   />
-                  <div className="w-11 h-6 bg-slate-800 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-blue-500 peer-checked:to-violet-500 peer-checked:border-transparent"></div>
+                  <div className="w-11 h-6 bg-slate-800 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-cyan-500 peer-checked:border-transparent"></div>
                 </div>
               </label>
             </div>
@@ -559,7 +559,7 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
           whileTap={!isReady ? {} : { scale: 0.98 }}
           disabled={!isReady}
           onClick={handleSubmit}
-          className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-violet-500 text-white px-8 py-3 rounded-xl font-semibold text-sm shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transition-all"
+          className="flex items-center gap-2 bg-gradient-to-r from-indigo-500 to-cyan-500 text-white px-8 py-3 rounded-xl font-semibold text-sm shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transition-all"
         >
           <Play className="w-4 h-4 fill-current" />
           Start Seeding Job

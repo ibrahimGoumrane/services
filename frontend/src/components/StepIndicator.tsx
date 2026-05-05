@@ -1,4 +1,3 @@
-import React from "react";
 import { Check } from "lucide-react";
 import { motion } from "framer-motion";
 interface StepIndicatorProps {
@@ -52,7 +51,7 @@ export function StepIndicator({
 
         {/* Animated active line */}
         <motion.div
-          className="absolute left-0 top-1/2 -translate-y-1/2 h-[3px] bg-gradient-to-r from-blue-500 to-violet-500 rounded-full z-0 shadow-[0_0_10px_rgba(139,92,246,0.5)]"
+          className="absolute left-0 top-1/2 -translate-y-1/2 h-[3px] bg-gradient-to-r from-indigo-500 to-cyan-500 rounded-full z-0 shadow-[0_0_10px_rgba(99,102,241,0.5)]"
           initial={{
             width: "0%",
           }}
@@ -79,22 +78,22 @@ export function StepIndicator({
                 animate={{
                   scale: isActive ? 1.1 : 1,
                   backgroundColor: isCompleted
-                    ? "#8b5cf6"
+                    ? "#6366f1"
                     : isActive
                       ? "#1e293b"
                       : "#0f172a",
                   borderColor: isCompleted
-                    ? "#8b5cf6"
+                    ? "#6366f1"
                     : isActive
-                      ? "#8b5cf6"
+                      ? "#6366f1"
                       : "#334155",
                 }}
                 transition={{
                   duration: 0.3,
                 }}
                 className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold border-2 shadow-sm
-                  ${isCompleted ? "text-white shadow-violet-500/30" : ""}
-                  ${isActive ? "text-violet-400 shadow-violet-500/20" : ""}
+                  ${isCompleted ? "text-white shadow-indigo-500/30" : ""}
+                  ${isActive ? "text-indigo-400 shadow-indigo-500/20" : ""}
                   ${isUpcoming ? "text-slate-500" : ""}
                 `}
               >

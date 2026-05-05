@@ -99,7 +99,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
       status !== "completed" &&
       status !== "failed"
     ) {
-      return <Loader2 className="w-5 h-5 text-violet-400 animate-spin" />;
+      return <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />;
     }
     return <Clock className="w-5 h-5 text-slate-600" />;
   };
@@ -180,7 +180,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
             className="glass-card rounded-2xl p-6"
           >
             <h3 className="text-sm font-semibold text-slate-200 mb-6 flex items-center gap-2 pb-4 border-b border-slate-700/50">
-              <Activity className="w-4 h-4 text-violet-400" /> Status
+              <Activity className="w-4 h-4 text-indigo-400" /> Status
             </h3>
             <div className="flex flex-col gap-6 relative before:absolute before:inset-0 before:ml-[11px] before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-slate-700 before:via-slate-800 before:to-transparent">
               {(["queued", "running", "paused", "completed"] as JobDisplayStatus[]).map(
@@ -195,7 +195,7 @@ export function ProcessingStep({ jobId, onComplete }: ProcessingStepProps) {
                     >
                       <div
                         className={`flex items-center justify-center w-6 h-6 rounded-full border-4 border-slate-900 bg-slate-800 shrink-0 transition-colors duration-300
-                      ${isActiveStep ? "border-slate-900 bg-slate-800 shadow-[0_0_10px_rgba(139,92,246,0.3)]" : ""}
+                      ${isActiveStep ? "border-slate-900 bg-slate-800 shadow-[0_0_10px_rgba(99,102,241,0.3)]" : ""}
                     `}
                       >
                         {stepStatus === "completed" && status === "failed" ? (

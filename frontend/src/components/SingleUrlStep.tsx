@@ -36,7 +36,7 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
 
       <div className="glass-card rounded-2xl p-6 flex flex-col gap-5">
         <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
-          <Link2 className="w-4 h-4 text-violet-400" />
+          <Link2 className="w-4 h-4 text-indigo-400" />
           Website URL
         </label>
         <div className="relative">
@@ -46,14 +46,14 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
             value={url}
             onChange={(event) => setUrl(event.target.value)}
             placeholder="example.com or https://example.com"
-            className="w-full bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-10 pr-4 py-3 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500"
+            className="w-full bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-10 pr-4 py-3 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500"
           />
         </div>
       </div>
 
       <div className="glass-card rounded-2xl p-6">
         <div className="mb-4 flex items-center gap-2 text-slate-300">
-          <Settings2 className="w-4 h-4 text-violet-400" />
+          <Settings2 className="w-4 h-4 text-indigo-400" />
           <span className="text-sm font-semibold">Scraping Settings</span>
         </div>
 
@@ -68,7 +68,7 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
                   enableWebScraping: event.target.checked,
                 }))
               }
-              className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-violet-500"
+              className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-indigo-500"
             />
             <span className="text-sm font-medium text-slate-300">
               Enable web scraping
@@ -85,7 +85,7 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
                   skipGoogleSearch: event.target.checked,
                 }))
               }
-              className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-violet-500"
+              className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-indigo-500"
             />
             <span className="text-sm font-medium text-slate-300">
               Skip Google search fallback
@@ -99,7 +99,7 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
           type="button"
           disabled={!canSubmit}
           onClick={() => onSubmit(url.trim(), settings)}
-          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-500/20 transition hover:shadow-violet-500/35 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/35 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Play className="w-4 h-4" />
           {isSubmitting ? "Starting..." : "Start URL Job"}

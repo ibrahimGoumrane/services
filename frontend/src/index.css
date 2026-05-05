@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
@@ -6,31 +6,35 @@
 
 @layer base {
   body {
-    @apply bg-slate-950 text-slate-50 font-sans antialiased selection:bg-violet-500/30;
-    /* Subtle premium background glow */
-    background-image: 
-      radial-gradient(circle at 15% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 40%),
-      radial-gradient(circle at 85% 100%, rgba(139, 92, 246, 0.08) 0%, transparent 40%);
+    @apply bg-[#060b16] text-slate-100 font-sans antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 60% at 20% 0%, rgba(99, 102, 241, 0.07) 0%, transparent 50%),
+      radial-gradient(ellipse 60% 50% at 80% 100%, rgba(6, 182, 212, 0.06) 0%, transparent 50%),
+      radial-gradient(ellipse 40% 40% at 50% 50%, rgba(139, 92, 246, 0.04) 0%, transparent 60%);
     background-attachment: fixed;
   }
 }
+
 @layer utilities {
   .glass-card {
-    @apply bg-slate-900/60 backdrop-blur-xl border border-slate-700/50 shadow-xl shadow-black/20;
+    @apply bg-slate-900/50 backdrop-blur-xl border border-slate-800/60 shadow-xl shadow-black/20;
   }
   .glass-panel {
-    @apply bg-slate-800/40 backdrop-blur-md border border-slate-700/50;
+    @apply bg-slate-800/30 backdrop-blur-md border border-slate-800/60;
   }
   .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-violet-400;
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400;
   }
   .animated-border-gradient {
-    background: linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6);
-    background-size: 200% auto;
-    animation: border-flow 3s linear infinite;
+    background: linear-gradient(90deg, #6366f1, #06b6d4, #8b5cf6, #6366f1);
+    background-size: 300% auto;
+    animation: border-flow 4s linear infinite;
+  }
+  .nav-glow {
+    box-shadow: 0 0 30px rgba(99, 102, 241, 0.08), 0 0 60px rgba(6, 182, 212, 0.04);
   }
 }
-/* Custom scrollbar for log panel and general use */
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
