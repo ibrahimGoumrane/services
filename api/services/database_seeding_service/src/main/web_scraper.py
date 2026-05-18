@@ -153,3 +153,27 @@ def _dedupe(values: List[str]) -> List[str]:
             seen.add(key)
             result.append(v.strip())
     return result
+
+
+def extract_all_links(
+    base_url: str,
+    html: str,
+) -> List[str]:
+    """Return all absolute page URLs found in <a href> tags, excluding mailto/tel/js/anchors."""
+    if not html:
+        return []
+    soup = BeautifulSoup(html, "html.parser")
+    candidates: List[str] = []
+    for node in soup.select("a[href]"):
+        href = (node.get("href") or "").strip()
+        if not href:
+            continue
+        href_lower = href.lower()
+        if href_lower.startswith(("mailto:", "tel:", "javascript:", "#")):
+            continue
+        absolute = urljoin(base_url, href)
+        if urlparse(absolute).scheme not in {"http", "https"}:
+            continue
+        normalized = normalize_url(absolute)
+        candidates.append(normalized)
+    return _dedupe(candidates)

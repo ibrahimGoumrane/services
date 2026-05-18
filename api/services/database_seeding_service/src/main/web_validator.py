@@ -12,7 +12,7 @@ from ..utils.extractor_phone import extract_phones_from_text
 from ..utils.extractor_social_media import extract_social_links
 from ..utils.url_utils import normalize_url, validate_website_http
 from api.services.utils.logging_config import get_logger
-from .web_scraper import NoDriverDriver, PageScraper, _dedupe, extract_contact_links
+from .web_scraper import NoDriverDriver, PageScraper, _dedupe, extract_all_links, extract_contact_links
 from .web_searcher import GoogleSearcher
 
 logger = get_logger("dbSeeder.web_validator")
@@ -212,6 +212,7 @@ class WebsiteEmailValidator:
             )
             contact_page = contact_candidates[0] if contact_candidates else None
             person_name, company_name = extract_name_company(homepage_html)
+            all_page_links = extract_all_links(website_url, homepage_html)
 
             # ── 2. Crawl contact pages if missing information ─────────
             if len(all_emails) > 0 and len(all_phones) > 0 and len(all_social_links.keys()) > 0 and (location or city or country):
@@ -228,6 +229,7 @@ class WebsiteEmailValidator:
 
                         all_emails.extend(extract_emails_from_text(html))
                         all_phones.extend(extract_phones_from_text(html))
+                        all_page_links.extend(extract_all_links(website_url, html))
 
                         if not (location and city and country):
                             location, city, country, zip_code = (
@@ -256,12 +258,15 @@ class WebsiteEmailValidator:
 
             all_emails = _dedupe(all_emails)
             all_phones = _dedupe(all_phones)
+            all_page_links = _dedupe(all_page_links)
+
             logger.info(
                 f"[validator] find_contact_info_on_website done url={website_url} "
                 f"emails={len(all_emails)} phones={len(all_phones)} "
                 f"contact_page={contact_page!r} location={location!r} "
                 f"city={city!r} country={country!r} zip_code={zip_code!r} "
                 f"socials={list(all_social_links.keys())} "
+                f"page_links={len(all_page_links)} "
                 f"person_name={person_name!r} company_name={company_name!r}"
             )
             return ScrapedWebData(
@@ -275,6 +280,7 @@ class WebsiteEmailValidator:
                 social_links=all_social_links,
                 person_name=person_name,
                 company_name=company_name,
+                all_urls=all_page_links,
             )
 
         except Exception as exc:

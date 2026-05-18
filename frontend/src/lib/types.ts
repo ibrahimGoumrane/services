@@ -30,7 +30,7 @@ export interface JobSettings {
 }
 
 export interface UrlScrapeRequest {
-  url: string;
+  urls: string[];
   enable_web_scraping: boolean;
   skip_google_search: boolean;
 }

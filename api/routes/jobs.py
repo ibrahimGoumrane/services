@@ -118,7 +118,7 @@ async def create_job(
 async def create_url_job(payload: UrlScrapeRequest) -> CreateJobResponse:
     job_payload = {
         "job_type": "single_url",
-        "target_url": payload.url,
+        "target_urls": payload.urls,
         "enable_web_scraping": payload.enable_web_scraping,
         "skip_google_search": payload.skip_google_search,
         "sourcefile": payload.sourcefile,

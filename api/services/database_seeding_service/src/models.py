@@ -111,6 +111,10 @@ class PersonContactData:
     youtube: Optional[str] = None
     telegram: Optional[str] = None
     calendly: Optional[str] = None
+    twitter: Optional[str] = None
+    signal: Optional[str] = None
+    urls: Optional[str] = None
+    comment: Optional[str] = None
 
     def to_tuple(self) -> tuple:
         return (
@@ -120,7 +124,7 @@ class PersonContactData:
             self.linkedin, self.image, self.mx_host, self.is_generic_email, self.is_user_generic,
             self.status, self.sourcefile, self.ca, self.activite,
             self.whatsapp, self.facebook, self.instagram, self.tiktok, self.youtube,
-            self.telegram, self.calendly,
+            self.telegram, self.calendly, self.twitter, self.signal, self.urls, self.comment,
        )
 
 @dataclass
@@ -152,6 +156,10 @@ class CompanyContactData:
     youtube: Optional[str] = None
     telegram: Optional[str] = None
     calendly: Optional[str] = None
+    twitter: Optional[str] = None
+    signal: Optional[str] = None
+    urls: Optional[str] = None
+    comment: Optional[str] = None
 
     def to_tuple(self) -> tuple:
         """Return a tuple of all fields in a consistent order for database insertion."""
@@ -162,7 +170,7 @@ class CompanyContactData:
             self.linkedin, self.image, self.mx_host, self.is_generic_email, self.is_user_generic,
             self.status, self.sourcefile, self.ca, self.activite,
             self.whatsapp, self.facebook, self.instagram, self.tiktok, self.youtube,
-            self.telegram, self.calendly,
+            self.telegram, self.calendly, self.twitter, self.signal, self.urls, self.comment,
         )
 
 @dataclass
@@ -184,6 +192,7 @@ class ScrapedWebData:
     social_links: Dict[str, List[str]] = field(default_factory=dict)
     person_name: Optional[str] = None
     company_name: Optional[str] = None
+    all_urls: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -197,6 +206,7 @@ class ScrapedWebData:
             "social_links": {k: list(v) for k, v in self.social_links.items()},
             "person_name": self.person_name,
             "company_name": self.company_name,
+            "all_urls": self.all_urls,
         }
 
     @classmethod
@@ -212,4 +222,5 @@ class ScrapedWebData:
             social_links=data.get("social_links", {}),
             person_name=data.get("person_name"),
             company_name=data.get("company_name"),
+            all_urls=data.get("all_urls", []),
         )

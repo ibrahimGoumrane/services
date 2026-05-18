@@ -29,17 +29,17 @@ def seed_database(config: ProcessingConfig, job_id: str | None = None) -> dict[s
 
 
 def seed_single_url(
-    url: str,
+    urls: list[str],
     enable_web_scraping: bool = True,
     skip_google_search: bool = False,
     sourcefile: str | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Process and persist data from a single URL.
+    Process and persist data from multiple URLs sequentially.
     """
     return process_single_url_seeding(
-        url=url,
+        urls=urls,
         enable_web_scraping=enable_web_scraping,
         skip_google_search=skip_google_search,
         sourcefile=sourcefile,

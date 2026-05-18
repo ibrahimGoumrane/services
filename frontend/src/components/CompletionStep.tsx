@@ -6,14 +6,13 @@ import {
   RefreshCw,
   XCircle,
 } from "lucide-react";
-import { JobMetrics, LogEntry, UrlScrapeResult } from "../lib/types";
+import { JobMetrics, LogEntry } from "../lib/types";
 interface CompletionStepProps {
   status: "completed" | "failed";
   jobId: string | null;
   metrics: JobMetrics;
   logs: LogEntry[];
   error?: string;
-  urlResult?: UrlScrapeResult | null;
   onReset: () => void;
 }
 const containerVariants = {
@@ -47,7 +46,6 @@ export function CompletionStep({
   metrics,
   logs,
   error,
-  urlResult,
   onReset,
 }: CompletionStepProps) {
   const isSuccess = status === "completed";
@@ -196,50 +194,6 @@ export function CompletionStep({
             <p className="text-sm text-rose-300/90 font-mono break-words leading-relaxed">
               {error}
             </p>
-          </motion.div>
-        )}
-
-        {isSuccess && urlResult && (
-          <motion.div
-            variants={itemVariants}
-            className="w-full bg-slate-900/70 border border-slate-700/70 rounded-2xl p-6 mb-10 text-left"
-          >
-            <h4 className="text-sm font-bold tracking-wide uppercase text-indigo-300 mb-4">
-              URL Scraping Result
-            </h4>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {[
-                { label: "Email", value: urlResult.email },
-                { label: "Website", value: urlResult.website },
-                { label: "Phone", value: urlResult.phone },
-                { label: "City", value: urlResult.city },
-                { label: "Country", value: urlResult.country },
-                {
-                  label: "Contact Form URL",
-                  value: urlResult.contact_form_url,
-                },
-                { label: "WhatsApp", value: urlResult.whatsapp },
-                { label: "Facebook", value: urlResult.facebook },
-                { label: "Instagram", value: urlResult.instagram },
-                { label: "TikTok", value: urlResult.tiktok },
-                { label: "YouTube", value: urlResult.youtube },
-                { label: "Telegram", value: urlResult.telegram },
-                { label: "Calendly", value: urlResult.calendly },
-                { label: "DB Action", value: urlResult.status },
-              ].map((item) => (
-                <div
-                  key={item.label}
-                  className="rounded-xl border border-slate-700/70 bg-slate-950/60 p-3"
-                >
-                  <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
-                    {item.label}
-                  </div>
-                  <div className="text-sm text-slate-200 break-all">
-                    {item.value || "-"}
-                  </div>
-                </div>
-              ))}
-            </div>
           </motion.div>
         )}
 

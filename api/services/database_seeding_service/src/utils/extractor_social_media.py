@@ -45,6 +45,14 @@ _SOCIAL_PATTERNS = {
         r"https?://(?:www\.)?telegram\.me/[\w+]+",
         r"https?://(?:www\.)?telegram\.dog/[\w+]+",
     ],
+    "twitter": [
+        r"https?://(?:www\.)?twitter\.com/[\w./?=&-]+",
+        r"https?://(?:www\.)?x\.com/[\w./?=&-]+",
+    ],
+    "signal": [
+        r"https?://(?:www\.)?signal\.me/[\w+/#.-]+",
+        r"https?://(?:www\.)?signal\.group/[\w+/#.-]+",
+    ],
     "calendly": [
         r"https?://(?:www\.)?calendly\.com/[\w/-]+",
     ],
@@ -53,18 +61,6 @@ _SOCIAL_PATTERNS = {
 _COMPILED_PATTERNS: Dict[str, List[re.Pattern]] = {
     platform: [re.compile(p, re.IGNORECASE) for p in patterns]
     for platform, patterns in _SOCIAL_PATTERNS.items()
-}
-
-# Attributes that commonly contain external URLs.
-_URL_ATTRS = {
-    "href",
-    "src",
-    "data-href",
-    "data-url",
-    "data-link",
-    "data-action",
-    "action",
-    "content",
 }
 
 # Characters that may trail a URL when it lives inside HTML markup.

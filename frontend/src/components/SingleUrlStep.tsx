@@ -4,19 +4,24 @@ import { motion } from "framer-motion";
 import { JobSettings } from "../lib/types";
 
 interface SingleUrlStepProps {
-  onSubmit: (url: string, settings: JobSettings) => void;
+  onSubmit: (urls: string[], settings: JobSettings) => void;
   isSubmitting: boolean;
 }
 
 export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
-  const [url, setUrl] = useState("");
+  const [urlsText, setUrlsText] = useState("");
   const [settings, setSettings] = useState<JobSettings>({
     batchSize: 1,
     enableWebScraping: true,
     skipGoogleSearch: false,
   });
 
-  const canSubmit = !!url.trim() && !isSubmitting;
+  const parsedUrls = urlsText
+    .split("\n")
+    .map((u) => u.trim())
+    .filter(Boolean);
+
+  const canSubmit = parsedUrls.length > 0 && !isSubmitting;
 
   return (
     <motion.div
@@ -26,27 +31,30 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
     >
       <div>
         <h2 className="text-2xl font-bold tracking-tight text-slate-50">
-          Single URL Scraping
+          Batch URL Scraping
         </h2>
         <p className="text-sm font-medium text-slate-400 mt-2">
-          Enter one website URL to scrape contact data and store it directly in
-          the database.
+          Enter multiple website URLs (one per line) to scrape contact data and
+          store it directly in the database.
         </p>
       </div>
 
       <div className="glass-card rounded-2xl p-6 flex flex-col gap-5">
         <label className="text-sm font-semibold text-slate-300 flex items-center gap-2">
           <Link2 className="w-4 h-4 text-indigo-400" />
-          Website URL
+          Website URLs
+          <span className="text-xs font-normal text-slate-500 ml-auto">
+            {parsedUrls.length} URL{parsedUrls.length !== 1 ? "s" : ""}
+          </span>
         </label>
         <div className="relative">
-          <Globe className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            placeholder="example.com or https://example.com"
-            className="w-full bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-10 pr-4 py-3 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500"
+          <Globe className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+          <textarea
+            value={urlsText}
+            onChange={(event) => setUrlsText(event.target.value)}
+            placeholder="example.com&#10;https://another.com&#10;site.org"
+            rows={6}
+            className="w-full bg-slate-950 border border-slate-700 text-sm font-medium rounded-xl pl-10 pr-4 py-3 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 resize-none"
           />
         </div>
       </div>
@@ -98,7 +106,7 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
         <button
           type="button"
           disabled={!canSubmit}
-          onClick={() => onSubmit(url.trim(), settings)}
+          onClick={() => onSubmit(parsedUrls, settings)}
           className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-cyan-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:shadow-indigo-500/35 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Play className="w-4 h-4" />

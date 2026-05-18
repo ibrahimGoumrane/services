@@ -9,7 +9,6 @@ import {
   JobMetrics,
   JobSnapshot,
   LogEntry,
-  UrlScrapeResult,
   deriveDisplayStatus,
 } from "../lib/types";
 import { AlertCircle, ListChecks } from "lucide-react";
@@ -30,9 +29,6 @@ export function SingleUrlPage() {
   });
   const [finalLogs, setFinalLogs] = useState<LogEntry[]>([]);
   const [finalError, setFinalError] = useState<string | undefined>();
-  const [finalUrlResult, setFinalUrlResult] = useState<UrlScrapeResult | null>(
-    null,
-  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<JobSnapshot[]>([]);
@@ -64,9 +60,6 @@ export function SingleUrlPage() {
 
   const recoverJob = (job: JobSnapshot) => {
     setJobId(job.job_id);
-    setFinalUrlResult(
-      (job.result?.url_result as UrlScrapeResult | null) ?? null,
-    );
     const displayStatus = deriveDisplayStatus(job);
     if (displayStatus === "completed" || displayStatus === "failed") {
       setFinalStatus(displayStatus);
@@ -92,12 +85,12 @@ export function SingleUrlPage() {
     [jobs],
   );
 
-  const handleSingleUrlSubmit = async (url: string, settings: JobSettings) => {
+  const handleSingleUrlSubmit = async (urls: string[], settings: JobSettings) => {
     setIsSubmitting(true);
     setSubmitError(null);
     try {
       const newJobId = await createUrlJob({
-        url,
+        urls,
         enable_web_scraping: settings.enableWebScraping,
         skip_google_search: settings.skipGoogleSearch,
       });
@@ -129,9 +122,6 @@ export function SingleUrlPage() {
         .then((snapshot) => {
           setFinalMetrics(toMetrics(snapshot));
           setFinalError(snapshot.error ?? error);
-          setFinalUrlResult(
-            (snapshot.result?.url_result as UrlScrapeResult | null) ?? null,
-          );
         })
         .catch((e) => {
           console.error("Failed to fetch final job status:", e);
@@ -145,7 +135,6 @@ export function SingleUrlPage() {
     setFinalStatus(null);
     setFinalLogs([]);
     setFinalError(undefined);
-    setFinalUrlResult(null);
   };
 
   const indicatorStep = step === 1 ? 1 : step === 3 ? 3 : 2;
@@ -261,7 +250,6 @@ export function SingleUrlPage() {
                 metrics={finalMetrics}
                 logs={finalLogs}
                 error={finalError}
-                urlResult={finalUrlResult}
                 onReset={resetPage}
               />
             </motion.div>

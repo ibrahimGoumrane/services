@@ -29,7 +29,7 @@ async def run_seed_job(job_id: str) -> None:
             if str(job.payload.get("job_type", "")).lower() == "single_url":
                 result = await asyncio.to_thread(
                     seed_single_url,
-                    url=str(job.payload.get("target_url", "")),
+                    urls=job.payload.get("target_urls", []),
                     enable_web_scraping=bool(job.payload.get("enable_web_scraping", True)),
                     skip_google_search=bool(job.payload.get("skip_google_search", False)),
                     sourcefile=job.payload.get("sourcefile"),

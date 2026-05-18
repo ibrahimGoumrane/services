@@ -74,6 +74,33 @@ def _prefer_named_synthetic_email(domain: str, fname: str, lname: str, fullname:
     return None
 
 
+def _build_urls_field(
+    all_urls: List[str],
+    website: Optional[str],
+    contact_form_url: Optional[str],
+    social_links: Dict[str, Any],
+) -> Optional[str]:
+    """Filter out main site, contact form, and social URLs; return comma-separated string."""
+    if not all_urls:
+        return None
+    main_site = (website or "").rstrip("/")
+    contact = (contact_form_url or "").rstrip("/")
+    social_urls = set()
+    for urls in social_links.values():
+        social_urls.update(urls)
+
+    filtered = []
+    for url in all_urls:
+        url_stripped = url.rstrip("/")
+        if url_stripped == main_site or url_stripped == contact:
+            continue
+        if url_stripped in social_urls:
+            continue
+        filtered.append(url)
+
+    return ",".join(filtered) if filtered else None
+
+
 def _is_linkedin_url(url: Optional[str]) -> bool:
     if not url:
         return False
@@ -467,21 +494,30 @@ def _enrich_person(
     if scraped.social_links:
         social_links = {platform: list(urls) for platform, urls in scraped.social_links.items()}
         if not person.linkedin and social_links.get("linkedin"):
-            person.linkedin = social_links["linkedin"][0]
+            person.linkedin = ",".join(social_links["linkedin"])
         if not person.whatsapp and social_links.get("whatsapp"):
-            person.whatsapp = social_links["whatsapp"][0]
+            person.whatsapp = ",".join(social_links["whatsapp"])
         if not person.facebook and social_links.get("facebook"):
-            person.facebook = social_links["facebook"][0]
+            person.facebook = ",".join(social_links["facebook"])
         if not person.instagram and social_links.get("instagram"):
-            person.instagram = social_links["instagram"][0]
+            person.instagram = ",".join(social_links["instagram"])
         if not person.tiktok and social_links.get("tiktok"):
-            person.tiktok = social_links["tiktok"][0]
+            person.tiktok = ",".join(social_links["tiktok"])
         if not person.youtube and social_links.get("youtube"):
-            person.youtube = social_links["youtube"][0]
+            person.youtube = ",".join(social_links["youtube"])
         if not person.telegram and social_links.get("telegram"):
-            person.telegram = social_links["telegram"][0]
+            person.telegram = ",".join(social_links["telegram"])
         if not person.calendly and social_links.get("calendly"):
-            person.calendly = social_links["calendly"][0]
+            person.calendly = ",".join(social_links["calendly"])
+        if not person.twitter and social_links.get("twitter"):
+            person.twitter = ",".join(social_links["twitter"])
+        if not person.signal and social_links.get("signal"):
+            person.signal = ",".join(social_links["signal"])
+
+    # --- Non-social page URLs ----------------------------------------------
+    person.urls = _build_urls_field(
+        scraped.all_urls, person.website, person.contact_form_url, scraped.social_links or {}
+    )
 
     # --- Names extracted from website text ---------------------------------
     # scraped.person_name maps to fullname, scraped.company_name maps to name
@@ -489,19 +525,6 @@ def _enrich_person(
         person.fullname = scraped.person_name
     if not person.name and scraped.company_name:
         person.name = scraped.company_name
-
-    # --- Person LinkedIn search -------------------------------------------
-    if not validator.skip_website_search and not person.linkedin and person.fullname:
-        try:
-            logger.info(f"Person LinkedIn search: '{person.fullname}'")
-            urls, _ = validator.search_google(
-                person.fullname, looking_for="linkedin_profile"
-            )
-            if urls:
-                person.linkedin = urls[0]
-                logger.info(f"Person LinkedIn found: '{person.linkedin}'")
-        except Exception as exc:
-            logger.debug(f"Person LinkedIn search failed (non-fatal): {exc}")
 
     # --- Synthetic e-mail fallback ----------------------------------------
     if not person.email or "@" not in person.email:
@@ -559,71 +582,6 @@ def _enrich_person(
         f"is_user_generic={person.is_user_generic}"
     )
     return person
-
-
-def _enrich_extra_contacts(
-    person: PersonContactData,
-    extra_emails: List[str],
-    generic_domains: Set[str],
-    generic_users: Set[str],
-    generic_mx: Set[str],
-    site_builder_domains: Set[str],
-    mx_cache: Dict,
-    new_mx_records: List,
-) -> List[Tuple]:
-    extra_contacts: List[Tuple] = []
-    for extra_email in extra_emails:
-        extra_person = PersonContactData(
-            email=extra_email.strip().lower(),
-            fullname=person.fullname,
-            fname=person.fname,
-            lname=person.lname,
-            website=person.website,
-            position=person.position,
-            phone=person.phone,
-            mobile=person.mobile,
-            fax=person.fax,
-            name=person.name,
-            address=person.address,
-            city=person.city,
-            zip_code=person.zip_code,
-            country=person.country,
-            contact_form_url=person.contact_form_url,
-            linkedin=person.linkedin,
-            image=person.image,
-            sourcefile=person.sourcefile,
-            ca=person.ca,
-            activite=person.activite,
-            whatsapp=person.whatsapp,
-            facebook=person.facebook,
-            instagram=person.instagram,
-            tiktok=person.tiktok,
-            youtube=person.youtube,
-            telegram=person.telegram,
-            calendly=person.calendly,
-        )
-
-        is_generic, is_user_generic = email_classifiers.classify_email(
-            extra_person.email, generic_domains, generic_users, generic_mx, site_builder_domains
-        )
-        mx_host, is_generic = _resolve_mx(
-            extra_person.email, is_generic, mx_cache, new_mx_records, generic_mx, site_builder_domains
-        )
-        extra_person.mx_host = mx_host
-        extra_person.is_generic_email = is_generic
-        extra_person.is_user_generic = is_user_generic
-
-        if not mx_host:
-            extra_person.status = "ko"
-        elif is_generic or is_user_generic:
-            extra_person.status = "generic"
-        else:
-            extra_person.status = "valid"
-
-        extra_contacts.append(extra_person.to_tuple())
-        logger.info(f"Extra person contact staged for '{extra_person.email}'")
-
-    return extra_contacts
 
 
 # ---------------------------------------------------------------------------
@@ -702,44 +660,46 @@ def _enrich_company(
     if scraped.social_links:
         social_links = {platform: list(urls) for platform, urls in scraped.social_links.items()}
         if not company.linkedin and social_links.get("linkedin"):
-            company.linkedin = social_links["linkedin"][0]
+            company.linkedin = ",".join(social_links["linkedin"])
         if not company.whatsapp and social_links.get("whatsapp"):
-            company.whatsapp = social_links["whatsapp"][0]
+            company.whatsapp = ",".join(social_links["whatsapp"])
         if not company.facebook and social_links.get("facebook"):
-            company.facebook = social_links["facebook"][0]
+            company.facebook = ",".join(social_links["facebook"])
         if not company.instagram and social_links.get("instagram"):
-            company.instagram = social_links["instagram"][0]
+            company.instagram = ",".join(social_links["instagram"])
         if not company.tiktok and social_links.get("tiktok"):
-            company.tiktok = social_links["tiktok"][0]
+            company.tiktok = ",".join(social_links["tiktok"])
         if not company.youtube and social_links.get("youtube"):
-            company.youtube = social_links["youtube"][0]
+            company.youtube = ",".join(social_links["youtube"])
         if not company.telegram and social_links.get("telegram"):
-            company.telegram = social_links["telegram"][0]
+            company.telegram = ",".join(social_links["telegram"])
         if not company.calendly and social_links.get("calendly"):
-            company.calendly = social_links["calendly"][0]
+            company.calendly = ",".join(social_links["calendly"])
+        if not company.twitter and social_links.get("twitter"):
+            company.twitter = ",".join(social_links["twitter"])
+        if not company.signal and social_links.get("signal"):
+            company.signal = ",".join(social_links["signal"])
+
+    # --- Non-social page URLs ----------------------------------------------
+    company.urls = _build_urls_field(
+        scraped.all_urls, company.website, company.contact_form_url, scraped.social_links or {}
+    )
 
     # --- Names extracted from website text ---------------------------------
     if not company.name and scraped.company_name:
         company.name = scraped.company_name
-
-    # --- Company LinkedIn search ----------------------------------------
-    if not validator.skip_website_search and company.name and not company.linkedin:
-        try:
-            logger.info(f"Company LinkedIn search: '{company.name}'")
-            urls, _ = validator.search_google(
-                company.name, looking_for="linkedin_company"
-            )
-            if urls:
-                company.linkedin = urls[0]
-                logger.info(f"Company LinkedIn found: '{company.linkedin}'")
-        except Exception as exc:
-            logger.debug(f"Company LinkedIn search failed (non-fatal): {exc}")
 
     # --- Synthetic e-mail fallback ----------------------------------------
     if not company.email or "@" not in company.email:
         company_local = _slugify_for_email(company.name or "") or "company"
         company.email = f"{company_local}@{domain}"
         logger.info(f"Company synthetic fallback email: '{company.email}'")
+
+    # --- Extra emails → comment -------------------------------------------
+    main_email = company.email if company.email and "@" in company.email else None
+    extra_emails = [e for e in scraped.emails if e != main_email]
+    if extra_emails:
+        company.comment = ",".join(extra_emails)
 
     # --- E-mail classification -------------------------------------------
     is_generic, is_user_generic = email_classifiers.classify_email(
@@ -999,22 +959,11 @@ def _process_contact_row(
             row_stats=row_stats,
             local_panel=person_local_panel,
         )
+    # --- Store extra scraped emails in comment -----------------------------
     main_email = person.email if person.email and "@" in person.email else None
     extra_emails = [e for e in scraped.emails if e != main_email]
-    extra_contacts.extend(
-        _enrich_extra_contacts(
-            person=person,
-            extra_emails=extra_emails,
-            generic_domains=generic_domains,
-            generic_users=generic_users,
-            generic_mx=generic_mx,
-            site_builder_domains=site_builder_domains,
-            mx_cache=mx_cache,
-            new_mx_records=new_mx_records,
-        )
-    )
-        
-
+    if extra_emails:
+        person.comment = ",".join(extra_emails)
 
     # ------------------------------------------------------------------
     # 7. Enrich company contact (only when URL was found via Google search)
@@ -1409,37 +1358,47 @@ def process_database_seeding(
 # ---------------------------------------------------------------------------
 
 def process_single_url_seeding(
-    url: str,
+    urls: List[str],
     enable_web_scraping: bool = True,
     skip_google_search: bool = False,
     sourcefile: str | None = None,
     job_id: str | None = None,
 ) -> Dict[str, Any]:
-    """Scrape one URL, save one record, and return a compact scraping result payload."""
+    """Scrape multiple URLs sequentially, save records, and return aggregated stats."""
     global logger
     logger = setup_logging(module_name="dbSeeder", job_id=job_id, max_size=1)
 
+    total_urls = len(urls)
     stats: Dict[str, Any] = {
-        "total_rows": 1, "processed": 1, "inserted": 0, "updated": 0, "skipped": 0,
-        "emails_found": 0, "websites_found": 1, "mx_failed": 0,
-        "rows_skipped_no_required_field": 0, "rows_skipped_invalid_mx": 0,
-        "rows_skipped_no_email_found": 0, "errors": [],
-        "contact_form_discoveries": 0, "synthetic_emails_created": 0, "url_result": None,
+        "total_rows": total_urls,
+        "processed": 0,
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "emails_found": 0,
+        "websites_found": total_urls,
+        "mx_failed": 0,
+        "rows_skipped_no_required_field": 0,
+        "rows_skipped_invalid_mx": 0,
+        "rows_skipped_no_email_found": 0,
+        "errors": [],
+        "contact_form_discoveries": 0,
+        "synthetic_emails_created": 0,
     }
 
     logger.info(
-        "SEED_SINGLE_URL_START "
+        "SEED_MULTI_URL_START "
         f"job_id={job_id or 'none'} "
-        f"url='{url}' "
+        f"urls={total_urls} "
         f"web_scraping={'on' if enable_web_scraping else 'off'} "
         f"google_search={'on' if (enable_web_scraping and not skip_google_search) else 'off'}"
     )
 
     start_time = time.time()
     validator = WebsiteEmailValidator(
-            skip_website_search=skip_google_search,
-            site_timeout_seconds=SITE_TIMEOUT_SECONDS,
-        )
+        skip_website_search=skip_google_search,
+        site_timeout_seconds=SITE_TIMEOUT_SECONDS,
+    )
     validator.setup_driver()
     try:
         generic_domains, generic_users, generic_mx, site_builder_domains, not_visiting_domains = (
@@ -1453,59 +1412,52 @@ def process_single_url_seeding(
             not_visiting_domains=not_visiting_domains,
         )
 
-        contact_data, row_stats, extra_contacts = _process_contact_row(
-            row={"url": (url or "").strip()},
-            generic_domains=generic_domains,
-            generic_users=generic_users,
-            generic_mx=generic_mx,
-            site_builder_domains=site_builder_domains,
-            sourcefile=sourcefile or (url or "single-url"),
-            csv_mapping=CsvMapping(url="url"),
-            default_values={},
-            mx_cache={},
-            new_mx_records=[],
-            validator=validator,
-        )
+        for idx, url in enumerate(urls, start=1):
+            logger.info(f"Processing URL {idx}/{total_urls}: '{url}'")
 
-        _merge_row_stats(stats, row_stats)
+            contact_data, row_stats, extra_contacts = _process_contact_row(
+                row={"url": (url or "").strip()},
+                generic_domains=generic_domains,
+                generic_users=generic_users,
+                generic_mx=generic_mx,
+                site_builder_domains=site_builder_domains,
+                sourcefile=sourcefile or (url or "multi-url"),
+                csv_mapping=CsvMapping(url="url"),
+                default_values={},
+                mx_cache={},
+                new_mx_records=[],
+                validator=validator,
+            )
 
-        if contact_data is None:
-            stats.update(skipped=1, mx_failed=1, rows_skipped_no_email_found=1)
-            return stats
+            stats["processed"] += 1
+            _merge_row_stats(stats, row_stats)
 
-        inserted, updated = contact_repository.batch_create_contacts([*extra_contacts, contact_data])
-        stats["inserted"] = inserted
-        stats["updated"] = updated
-        stats["emails_found"] = 1 if (contact_data[0] and "@" in str(contact_data[0])) else 0
-        stats["url_result"] = {
-            "email": contact_data[0],
-            "website": contact_data[4],
-            "phone": contact_data[6],
-            "city": contact_data[11],
-            "country": contact_data[13],
-            "contact_form_url": contact_data[14],
-            "whatsapp": contact_data[24],
-            "facebook": contact_data[25],
-            "instagram": contact_data[26],
-            "tiktok": contact_data[27],
-            "youtube": contact_data[28],
-            "telegram": contact_data[29],
-            "calendly": contact_data[30],
-            "status": "updated" if updated else "inserted",
-        }
-        return stats
+            if contact_data is None:
+                stats["skipped"] += 1
+                stats["mx_failed"] += 1
+                stats["rows_skipped_no_email_found"] += 1
+                continue
 
-    except Exception as exc:
-        logger.error(f"Single URL processing failed: {exc}")
-        stats["errors"].append(str(exc))
-        stats["skipped"] = 1
+            if extra_contacts:
+                inserted, updated = contact_repository.batch_create_contacts([*extra_contacts, contact_data])
+            else:
+                inserted, updated = contact_repository.batch_create_contacts([contact_data])
+
+            stats["inserted"] += inserted
+            stats["updated"] += updated
+
+            if contact_data[0] and "@" in str(contact_data[0]):
+                stats["emails_found"] += 1
+
         return stats
     finally:
         if validator:
             validator.quit()
         elapsed = time.time() - start_time
         logger.info(
-            "SEED_SINGLE_URL_END "
+            "SEED_MULTI_URL_END "
+            f"processed={stats['processed']} "
+            f"total={stats['total_rows']} "
             f"inserted={stats['inserted']} "
             f"updated={stats['updated']} "
             f"errors={len(stats['errors'])} "

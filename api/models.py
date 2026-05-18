@@ -99,27 +99,29 @@ class SeedDatabaseRequest(BaseModel):
 
 
 class UrlScrapeRequest(BaseModel):
-    url: str
+    urls: list[str]
     enable_web_scraping: bool = True
     skip_google_search: bool = False
     sourcefile: str | None = None
 
-    @field_validator("url")
+    @field_validator("urls")
     @classmethod
-    def validate_url(cls, value: str) -> str:
-        raw_value = (value or "").strip()
-        if not raw_value:
-            raise ValueError("url cannot be empty")
-
-        normalized = raw_value
-        if "://" not in normalized:
-            normalized = f"https://{normalized}"
-
-        parsed = urlparse(normalized)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("url must be a valid http(s) URL")
-
-        return normalized
+    def validate_urls(cls, value: list[str]) -> list[str]:
+        validated: list[str] = []
+        for raw in value:
+            raw = (raw or "").strip()
+            if not raw:
+                continue
+            normalized = raw
+            if "://" not in normalized:
+                normalized = f"https://{normalized}"
+            parsed = urlparse(normalized)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(f"url must be a valid http(s) URL: {raw}")
+            validated.append(normalized)
+        if not validated:
+            raise ValueError("at least one valid URL is required")
+        return validated
 
 
 class CreateJobResponse(BaseModel):

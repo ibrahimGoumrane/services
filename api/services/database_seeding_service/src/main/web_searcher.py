@@ -17,7 +17,7 @@ logger = get_seeding_logger()
 
 # In case we need to update these in the future. 
 _SEARCH_FIELD_SELECTOR = '#APjFqb'
-_SUBMIT_BUTTON_SELECTOR = 'body > div.L3eUgb > div.o3j99.ikrT4e.om7nvf > form > div:nth-child(1) > div > div.FPdoLc.lJ9FBc > center > input.gNO89b'
+_SUBMIT_BUTTON_SELECTOR = 'body > div.L3eUgb > div.o3j99.ikrT4e.KEY6ib > form > div:nth-child(1) > div > div.FPdoLc.T14B5e.iThwld > center > input.gNO89b'
 _LOCAL_PANEL_SELECTOR = 'div.zhZ3gf'
 _ORGANIC_RESULT_CONTAINER_SELECTOR = '.A6K0A'
 _ORGANIC_RESULT_ANCHOR_SELECTOR = 'a[jsname="UWckNb"]'

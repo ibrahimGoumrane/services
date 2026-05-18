@@ -10,7 +10,6 @@ import {
   JobMetrics,
   JobSnapshot,
   LogEntry,
-  UrlScrapeResult,
   deriveDisplayStatus,
 } from "../lib/types";
 import { AlertCircle, ListChecks } from "lucide-react";
@@ -26,7 +25,6 @@ export function BatchFilePage() {
   const [finalMetrics, setFinalMetrics] = useState<JobMetrics>({ processed: 0, inserted: 0, updated: 0, errors: 0, synthetic_emails_created: 0 });
   const [finalLogs, setFinalLogs] = useState<LogEntry[]>([]);
   const [finalError, setFinalError] = useState<string | undefined>();
-  const [finalUrlResult, setFinalUrlResult] = useState<UrlScrapeResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<JobSnapshot[]>([]);
@@ -54,7 +52,6 @@ export function BatchFilePage() {
 
   const recoverJob = (job: JobSnapshot) => {
     setJobId(job.job_id);
-    setFinalUrlResult((job.result?.url_result as UrlScrapeResult | null) ?? null);
     const displayStatus = deriveDisplayStatus(job);
     if (displayStatus === "completed" || displayStatus === "failed") {
       setFinalStatus(displayStatus);
@@ -110,7 +107,6 @@ export function BatchFilePage() {
       void fetchJobStatus(jobId).then((snapshot) => {
         setFinalMetrics(toMetrics(snapshot));
         setFinalError(snapshot.error ?? error);
-        setFinalUrlResult((snapshot.result?.url_result as UrlScrapeResult | null) ?? null);
       }).catch((e) => {
         console.error("Failed to fetch final job status:", e);
       });
@@ -125,7 +121,6 @@ export function BatchFilePage() {
     setFinalStatus(null);
     setFinalLogs([]);
     setFinalError(undefined);
-    setFinalUrlResult(null);
   };
 
   return (
@@ -240,7 +235,6 @@ export function BatchFilePage() {
                 metrics={finalMetrics}
                 logs={finalLogs}
                 error={finalError}
-                urlResult={finalUrlResult}
                 onReset={resetPage}
               />
             </motion.div>

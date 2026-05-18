@@ -40,11 +40,15 @@ CONTACT_COLUMNS = [
     "youtube",
     "telegram",
     "calendly",
+    "twitter",
+    "signal",
+    "urls",
+    "comment",
 ]
 
 CONTACT_COLUMNS_MAP = {name: idx for idx, name in enumerate(CONTACT_COLUMNS)}
 
-CONTACT_COLUMNS_SQL = ", ".join(CONTACT_COLUMNS)
+CONTACT_COLUMNS_SQL = ", ".join(f"`{c}`" for c in CONTACT_COLUMNS)
 CONTACT_VALUES_SQL = ", ".join(["%s"] * len(CONTACT_COLUMNS))
 
 
@@ -218,12 +222,13 @@ def batch_create_contacts(contacts_list: List[Tuple]) -> Tuple[int, int]:
 
     Deduplicates within batch and merges non-null values into existing records.
 
-    Tuple structure (31 fields):
+    Tuple structure (35 fields):
         0:email(PK), 1:fullname, 2:fname, 3:lname, 4:url, 5:position, 6:phone, 7:mobile,
         8:fax, 9:name(company), 10:address, 11:city, 12:zip, 13:country, 14:urlcontactform,
         15:linkedin, 16:image, 17:mx, 18:emailgeneric, 19:usergeneric, 20:syntaxeemail,
         21:sourcefile, 22:CA, 23:activite, 24:whatsapp, 25:facebook,
-        26:instagram, 27:tiktok, 28:youtube, 29:telegram, 30:calendly
+        26:instagram, 27:tiktok, 28:youtube, 29:telegram, 30:calendly,
+        31:twitter, 32:signal, 33:urls, 34:comment
 
     Returns:
         Tuple of (inserted_count, updated_count)
@@ -289,7 +294,8 @@ def batch_create_contacts(contacts_list: List[Tuple]) -> Tuple[int, int]:
                     linkedin=%s, image=%s, mx=%s, emailgeneric=%s, usergeneric=%s,
                     syntaxeemail=%s, sourcefile=%s, CA=%s, activite=%s,
                     whatsapp=%s, facebook=%s, instagram=%s, tiktok=%s,
-                    youtube=%s, telegram=%s, calendly=%s
+                    youtube=%s, telegram=%s, calendly=%s,
+                    twitter=%s, `signal`=%s, urls=%s, comment=%s
                 WHERE email=%s
                 """,
                 [
@@ -299,6 +305,7 @@ def batch_create_contacts(contacts_list: List[Tuple]) -> Tuple[int, int]:
                         c[15], c[16], c[17], c[18], c[19],
                         c[20], c[21], c[22], c[23], c[24], c[25],
                         c[26], c[27], c[28], c[29], c[30],
+                        c[31], c[32], c[33], c[34],
                         c[0],
                     )
                     for c in contacts_to_update
