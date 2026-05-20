@@ -45,7 +45,12 @@ def resolve_mx_record(
         
         # Resolve MX record from DNS
         logger.debug(f"Resolving MX record for domain: {domain}")
-        answers = dns.resolver.resolve(domain, "MX")
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.nameservers = ["8.8.8.8", "1.1.1.1"]
+        resolver.timeout = 2
+        resolver.lifetime = 3
+
+        answers = resolver.resolve(domain, "MX")
         
         for rdata in answers:
             mx_host = str(rdata.exchange).rstrip(".").lower()
