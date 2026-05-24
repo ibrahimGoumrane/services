@@ -94,6 +94,8 @@ class SeedDatabaseRequest(BaseModel):
     batch_size: int = Field(default=5, ge=1)
     enable_web_scraping: bool = True
     skip_google_search: bool = False
+    enable_person_search: bool = True
+    enable_company_search: bool = True
     default_values: dict[str, Any] | None = None
     sourcefile: str | None = None
 

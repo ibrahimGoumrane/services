@@ -9,7 +9,8 @@ pycountry
 numpy
 requests
 beautifulsoup4
-nodriver
+selenium
+undetected-chromedriver
 mysqlx
 python-dotenv
 nltk

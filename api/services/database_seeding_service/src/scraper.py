@@ -61,6 +61,28 @@ def _slugify_for_email(value: str) -> str:
     return "".join(cleaned).strip(".")
 
 
+def _merge_scraped_data(base: ScrapedWebData, incoming: ScrapedWebData) -> ScrapedWebData:
+    """Merge two ScrapedWebData, with base values taking priority except for collections which are deduplicated."""
+    social_links: Dict[str, Set[str]] = {}
+    for d in (base.social_links, incoming.social_links):
+        for platform, urls in d.items():
+            social_links.setdefault(platform, set()).update(urls)
+
+    return ScrapedWebData(
+        emails=list(dict.fromkeys([*base.emails, *incoming.emails])),
+        phones=list(dict.fromkeys([*base.phones, *incoming.phones])),
+        all_urls=list(dict.fromkeys([*base.all_urls, *incoming.all_urls])),
+        contact_page=base.contact_page or incoming.contact_page,
+        location=base.location or incoming.location,
+        city=base.city or incoming.city,
+        country=base.country or incoming.country,
+        zip_code=base.zip_code or incoming.zip_code,
+        social_links=social_links,
+        person_name=base.person_name or incoming.person_name,
+        company_name=base.company_name or incoming.company_name,
+    )
+
+
 def _prefer_named_synthetic_email(domain: str, fname: str, lname: str, fullname: str) -> Optional[str]:
     if not domain:
         domain = "nodomaine.com"
@@ -307,7 +329,7 @@ def _resolve_website(
         else:
             search_query = f"{csv.name} {csv.location}"
         logger.info(f"Website search: '{search_query}'")
-        urls, local_panel = validator.search_google(search_query, looking_for="website")
+        urls, local_panel = validator.search_google(search_query)
 
         # Prefer the local-panel website, then fall back to organic results
         candidates: List[str] = []
@@ -337,9 +359,77 @@ def _resolve_website(
     return "", False, None, search_social_links
 
 
-# ---------------------------------------------------------------------------
-# Website scraping
-# ---------------------------------------------------------------------------
+def _resolve_all_websites(
+    csv: CsvRow,
+    validator: WebsiteEmailValidator,
+    type: Literal["person", "company"] = "person",
+) -> Tuple[List[str], Optional[Dict[str, str]], Optional[Dict[str, Set[str]]]]:
+    """
+    Like ``_resolve_website`` but returns **all** valid candidate URLs
+    from Google search that are not already in the database.
+
+    Back-fills *csv* from DB when a domain is already known.
+
+    Returns:
+        (urls_to_scrape, local_panel, search_social_links)
+        urls_to_scrape - valid URLs not in DB (empty list if none found)
+        local_panel    - Google My Business data or None
+        search_social_links - social URLs from all Google candidates
+    """
+    website = csv.website
+
+    if website:
+        if not validator.validate_website(website):
+            logger.info(f"Website rejected by validator: {website}")
+            return [], None, None
+        existing = contact_repository.get_contact_by_domain(website)
+        if existing:
+            logger.info("Website domain already in DB; reusing stored fields")
+            _populate_from_db(existing, csv)
+            return [], None, None
+        return [website], None, None
+
+    search_social_links: Optional[Dict[str, Set[str]]] = None
+    urls_to_scrape: List[str] = []
+    local_panel: Optional[Dict[str, str]] = None
+
+    if not validator.skip_website_search and csv.name:
+        search_query = ""
+        if type == "person":
+            if csv.fullname:
+                search_query = f"{csv.fullname} {csv.name}"
+            else:
+                search_query = f"{csv.fname} {csv.lname} {csv.name}"
+        else:
+            search_query = f"{csv.name} {csv.location}"
+        logger.info(f"Multi-website search: '{search_query}'")
+        urls, local_panel = validator.search_google(search_query)
+
+        candidates: List[str] = []
+        if local_panel and local_panel.get("website"):
+            candidates.append(local_panel["website"])
+        candidates.extend(urls)
+
+        if candidates:
+            search_social_links = extract_social_links_from_urls(candidates)
+            if search_social_links:
+                logger.info(
+                    f"Social links found in search candidates: "
+                    f"{', '.join(f'{k}={len(v)}' for k, v in search_social_links.items())}"
+                )
+
+        for candidate in candidates:
+            if not validator.validate_website(candidate):
+                continue
+            logger.info(f"Website search candidate valid: '{candidate}'")
+            existing = contact_repository.get_contact_by_domain(candidate)
+            if existing:
+                logger.info(f"Website domain already in DB; reusing stored fields: '{candidate}'")
+                _populate_from_db(existing, csv)
+                continue
+            urls_to_scrape.append(candidate)
+
+    return urls_to_scrape, local_panel, search_social_links
 
 def _scrape_website(url: str, validator: WebsiteEmailValidator) -> ScrapedWebData:
     """Scrape *url* and return raw contact data."""
@@ -748,8 +838,6 @@ def _enrich_company(
 
 def _enrich_company_contact(
     csv: CsvRow,
-    person_website: str,
-    scraped: ScrapedWebData,
     validator: WebsiteEmailValidator,
     generic_domains: Set[str],
     generic_users: Set[str],
@@ -757,6 +845,7 @@ def _enrich_company_contact(
     site_builder_domains: Set[str],
     mx_cache: Dict,
     new_mx_records: List,
+    scraped_cache: Dict[str, ScrapedWebData],
     company_cache: Optional[Dict[str, dict]] = None,
 ) -> Tuple[List[Tuple], Optional[str]]:
     enriched: List[Tuple] = []
@@ -770,8 +859,7 @@ def _enrich_company_contact(
 
     website_company: str = ""
     company_local_panel: Optional[Dict[str, str]] = None
-    scraped_company: ScrapedWebData = scraped
-    needs_scraping_company = False
+    merged_scraped_company: ScrapedWebData = ScrapedWebData()
     from_cache = False
     company_search_social_links: Optional[Dict[str, Set[str]]] = None
 
@@ -780,50 +868,53 @@ def _enrich_company_contact(
         if cached_entry is None:
             logger.debug(f"Company cache hit (no website found): '{csv.name}'")
             return enriched, company_linkedin
-        logger.info(f"Company cache hit for '{csv.name}' -> '{cached_entry.get('website')}'")
-        website_company = cached_entry["website"]
+        logger.info(f"Company cache hit for '{csv.name}' -> '{cached_entry.get('websites', ['?'])[0]}'")
+        website_company = cached_entry["websites"][0] if cached_entry["websites"] else ""
         company_local_panel = cached_entry.get("local_panel")
-        scraped_company = ScrapedWebData.from_dict(cached_entry.get("scraped", {}))
+        merged_scraped_company = ScrapedWebData.from_dict(cached_entry.get("scraped", {}))
         from_cache = True
     else:
-        website_company, needs_scraping_company, company_local_panel, company_search_social_links = _resolve_website(csv, validator, type="company")
+        company_urls, company_local_panel, company_search_social_links = _resolve_all_websites(
+            csv, validator, type="company"
+        )
 
-        if not website_company:
+        if not company_urls:
             if company_cache is not None and cache_key:
                 company_cache[cache_key] = None
                 logger.debug(f"Company cache miss (no website found): '{csv.name}'")
             return enriched, company_linkedin
 
-        if not needs_scraping_company:
-            return enriched, company_linkedin
+        website_company = company_urls[0] if company_urls else ""
 
-    if not from_cache:
-        if website_company != person_website:
-            logger.info(f"Company website resolved to a different URL than the person website; scraping separately: '{website_company}'")
-            scraped_company = _scrape_website(website_company, validator)
-        else:
-            scraped_company = scraped
-
-        # Merge social links discovered in company Google search candidates
-        if company_search_social_links:
-            if scraped_company.social_links:
-                for platform, urls in company_search_social_links.items():
-                    scraped_company.social_links.setdefault(platform, set()).update(urls)
+        # Scrape all company URLs, deduplicating via scraped_cache
+        for url in company_urls:
+            if url in scraped_cache:
+                scraped = scraped_cache[url]
             else:
-                scraped_company.social_links = company_search_social_links
+                scraped = _scrape_website(url, validator)
+                scraped_cache[url] = scraped
+            merged_scraped_company = _merge_scraped_data(merged_scraped_company, scraped)
+
+        # Merge social links discovered in Google search candidates
+        if company_search_social_links:
+            if merged_scraped_company.social_links:
+                for platform, urls in company_search_social_links.items():
+                    merged_scraped_company.social_links.setdefault(platform, set()).update(urls)
+            else:
+                merged_scraped_company.social_links = company_search_social_links
 
     if company_cache is not None and cache_key and not from_cache:
         company_cache[cache_key] = {
-            "website": website_company,
+            "websites": [website_company],
             "local_panel": company_local_panel,
-            "scraped": scraped_company.to_dict(),
+            "scraped": merged_scraped_company.to_dict(),
         }
-        logger.debug(f"Company cache stored: '{csv.name}' -> '{website_company}'")
+        logger.debug(f"Company cache stored: '{csv.name}'")
 
     company = _enrich_company(
         csv=csv,
         website=website_company,
-        scraped=scraped_company,
+        scraped=merged_scraped_company,
         validator=validator,
         generic_domains=generic_domains,
         generic_users=generic_users,
@@ -835,7 +926,7 @@ def _enrich_company_contact(
     )
     if company is not None:
         enriched.append(company.to_tuple())
-        logger.info(f"Company contact staged for '{person_website}'")
+        logger.info(f"Company contact staged for '{website_company}'")
         company_linkedin = company.linkedin
 
     return enriched, company_linkedin
@@ -887,6 +978,7 @@ def _process_contact_row(
     mx_cache: Dict[str, Tuple[Optional[str], Optional[str]]],
     new_mx_records: List[Tuple[str, str, str]],
     validator: WebsiteEmailValidator,
+    config: ProcessingConfig,
     company_cache: Optional[Dict[str, str]] = None,
 ) -> Tuple[Optional[Tuple], RowStats, List[Tuple]]:
     """
@@ -917,38 +1009,40 @@ def _process_contact_row(
     _handle_linkedin_in_website(csv)
 
     # ------------------------------------------------------------------
-    # 4. Resolve website (DB dedup + optional Google search)
-    #    Back-fills csv fields from DB when domain already known.
+    # 4. Shared scraped cache (URL -> ScrapedWebData) for cross-path dedup
     # ------------------------------------------------------------------
-    website, needs_scraping, person_local_panel, search_social_links = _resolve_website(csv, validator, type="person")
+    scraped_cache: Dict[str, ScrapedWebData] = {}
 
     # ------------------------------------------------------------------
-    # 5. Scrape the website once (shared by both person + company paths)
+    # 5. Person enrichment (multi-URL when Google search is involved)
     # ------------------------------------------------------------------
-    scraped = ScrapedWebData()
+    person_search_enabled = config.enable_person_search and config.enable_web_scraping
 
-    if needs_scraping:
-        scraped = _scrape_website(website, validator)
+    if person_search_enabled:
+        person_urls, person_local_panel, search_social_links = _resolve_all_websites(
+            csv, validator, type="person"
+        )
 
-    # Merge social links discovered in Google search candidates (e.g. LinkedIn)
-    if search_social_links:
-        if scraped.social_links:
-            for platform, urls in search_social_links.items():
-                scraped.social_links.setdefault(platform, set()).update(urls)
-        else:
-            scraped.social_links = search_social_links
+        person_scraped = ScrapedWebData()
+        if person_urls:
+            for url in person_urls:
+                scraped = _scrape_website(url, validator)
+                scraped_cache[url] = scraped
+                person_scraped = _merge_scraped_data(person_scraped, scraped)
 
-    # ------------------------------------------------------------------
-    # 6. Enrich person contact
-    #   Scraped data will contain multiple emails , we will use the first as the main email for person 
-    #   The others will be saved in the extra_contacts with the same shared data as the main one.
-    # ------------------------------------------------------------------
-    # The main person 
-    
-    person = _enrich_person(
+        # Merge social links discovered in Google search candidates
+        if search_social_links:
+            if person_scraped.social_links:
+                for platform, urls in search_social_links.items():
+                    person_scraped.social_links.setdefault(platform, set()).update(urls)
+            else:
+                person_scraped.social_links = search_social_links
+
+        person_website = person_urls[0] if person_urls else ""
+        person = _enrich_person(
             csv=csv,
-            website=website,
-            scraped=scraped,
+            website=person_website,
+            scraped=person_scraped,
             validator=validator,
             generic_domains=generic_domains,
             generic_users=generic_users,
@@ -959,32 +1053,48 @@ def _process_contact_row(
             row_stats=row_stats,
             local_panel=person_local_panel,
         )
-    # --- Store extra scraped emails in comment -----------------------------
-    main_email = person.email if person.email and "@" in person.email else None
-    extra_emails = [e for e in scraped.emails if e != main_email]
-    if extra_emails:
-        person.comment = ",".join(extra_emails)
+        # Store extra scraped emails in comment
+        main_email = person.email if person.email and "@" in person.email else None
+        extra_emails = [e for e in person_scraped.emails if e != main_email]
+        if extra_emails:
+            person.comment = ",".join(extra_emails)
+    else:
+        # Person without web enrichment (still runs MX/classification/synthetic email)
+        person = _enrich_person(
+            csv=csv,
+            website="",
+            scraped=ScrapedWebData(),
+            validator=validator,
+            generic_domains=generic_domains,
+            generic_users=generic_users,
+            generic_mx=generic_mx,
+            site_builder_domains=site_builder_domains,
+            mx_cache=mx_cache,
+            new_mx_records=new_mx_records,
+            row_stats=row_stats,
+            local_panel=None,
+        )
 
     # ------------------------------------------------------------------
-    # 7. Enrich company contact (only when URL was found via Google search)
+    # 6. Company enrichment (multi-URL with scraped_cache dedup)
     # ------------------------------------------------------------------
-    company_tuples, company_linkedin = _enrich_company_contact(
-        csv=csv,
-        person_website=website,
-        scraped=scraped,
-        validator=validator,
-        generic_domains=generic_domains,
-        generic_users=generic_users,
-        generic_mx=generic_mx,
-        site_builder_domains=site_builder_domains,
-        mx_cache=mx_cache,
-        new_mx_records=new_mx_records,
-        company_cache=company_cache,
-    )
-    
-    if company_linkedin and not person.linkedin:
-        person.linkedin = company_linkedin
-    extra_contacts.extend(company_tuples)
+    if config.enable_company_search and config.enable_web_scraping:
+        company_tuples, company_linkedin = _enrich_company_contact(
+            csv=csv,
+            validator=validator,
+            generic_domains=generic_domains,
+            generic_users=generic_users,
+            generic_mx=generic_mx,
+            site_builder_domains=site_builder_domains,
+            mx_cache=mx_cache,
+            new_mx_records=new_mx_records,
+            scraped_cache=scraped_cache,
+            company_cache=company_cache,
+        )
+
+        if company_linkedin and not person.linkedin:
+            person.linkedin = company_linkedin
+        extra_contacts.extend(company_tuples)
 
     return person.to_tuple(), row_stats, extra_contacts
 
@@ -1140,7 +1250,7 @@ def process_database_seeding(
                 stats[key] = int(existing_job.result.get(key, 0)) if existing_job.result else 0
             logger.info(f"Loaded job progress for {job_id}: resume from row {start_row}")
 
-    logger.info("Setting up NoDriver browser for web enrichment...")
+    logger.info("Setting up Selenium browser for web enrichment...")
     try:
         validator = WebsiteEmailValidator(
             skip_website_search=config.skip_google_search,
@@ -1153,9 +1263,9 @@ def process_database_seeding(
             site_builder_domains=site_builder_domains,
             not_visiting_domains=not_visiting_domains,
         )
-        logger.info("NoDriver browser ready")
+        logger.info("Selenium browser ready")
     except Exception as exc:
-        logger.error(f"Failed to setup NoDriver: {exc}")
+        logger.error(f"Failed to setup Selenium: {exc}")
         raise exc
 
     contact_batch: List[Tuple] = []
@@ -1194,6 +1304,7 @@ def process_database_seeding(
                     mx_cache=mx_cache,
                     new_mx_records=new_mx_records,
                     validator=validator,
+                    config=config,
                     company_cache=company_cache,
                 )
 
@@ -1317,7 +1428,7 @@ def process_database_seeding(
 
     finally:
         if validator:
-            logger.info("Closing NoDriver browser...")
+            logger.info("Closing Selenium browser...")
             validator.quit()
         _save_company_cache(company_cache)
         logger.info(f"Company cache saved ({len(company_cache)} entries)")
@@ -1361,6 +1472,8 @@ def process_single_url_seeding(
     urls: List[str],
     enable_web_scraping: bool = True,
     skip_google_search: bool = False,
+    enable_person_search: bool = True,
+    enable_company_search: bool = True,
     sourcefile: str | None = None,
     job_id: str | None = None,
 ) -> Dict[str, Any]:
@@ -1427,6 +1540,15 @@ def process_single_url_seeding(
                 mx_cache={},
                 new_mx_records=[],
                 validator=validator,
+                config=ProcessingConfig(
+                    csv_file_path="__single_url__",
+                    csv_mapping=CsvMapping(url="url"),
+                    enable_web_scraping=enable_web_scraping,
+                    skip_google_search=skip_google_search,
+                    enable_person_search=enable_person_search,
+                    enable_company_search=enable_company_search,
+                    sourcefile=sourcefile,
+                ),
             )
 
             stats["processed"] += 1

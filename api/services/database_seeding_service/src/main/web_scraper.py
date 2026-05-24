@@ -1,4 +1,4 @@
-"""Low-level page fetching utilities using NoDriver."""
+"""Low-level page fetching utilities using Selenium."""
 
 import random
 from typing import Callable, List, Optional
@@ -6,11 +6,13 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from ..utils.driver import NoDriverDriver
+from ..utils.driver import SeleniumDriver
 from ..utils.url_utils import normalize_url
 from api.services.utils.logging_config import get_logger
 
 logger = get_logger("dbSeeder.web_scraper")
+
+MAX_CONTENT_LENGTH = 3_000_000  # 2MB
 
 
 class PageScraper:
@@ -18,7 +20,7 @@ class PageScraper:
 
     def __init__(
         self,
-        driver: NoDriverDriver,
+        driver: SeleniumDriver,
         excluded_domains: Optional[List[str]] = None,
         site_timeout_seconds: int = 8,
         page_load_timeout_seconds: int = 18,
@@ -36,73 +38,51 @@ class PageScraper:
         """
         logger.info(f"[scrape] start url={url}")
 
-        if not self.driver.tab:
-            raise RuntimeError("Driver tab not initialized. Call setup() first.")
+        if not self.driver.driver:
+            raise RuntimeError("Driver not initialized. Call setup() first.")
 
-        self.driver.run(
-            self.driver.tab.get(url), timeout_seconds=self.page_load_timeout_seconds
-        )
-        self.driver.run(self.driver.tab.sleep(0.3))
+        self.driver.get(url, timeout=self.page_load_timeout_seconds)
+        self.driver.sleep(0.3)
 
-        self._handle_cf_challenge()
         self._accept_cookies()
         self._human_scroll()
 
-        html = str(
-            self.driver.run(
-                self.driver.tab.get_content(),
-                timeout_seconds=self.site_timeout_seconds,
+        html = self.driver.page_source or ""
+        if len(html) > MAX_CONTENT_LENGTH:
+            logger.warning(
+                f"[scrape] Skipping oversized page ({len(html)} bytes): {url}"
             )
-            or ""
-        )
+            return ""
         logger.info(f"[scrape] content length={len(html)} url={url}")
         return html
 
-
     # ── Private: anti-detection behaviour ─────────────────────────────────
-
-    def _handle_cf_challenge(self) -> None:
-        """Pass Cloudflare challenge if present."""
-        if not self.driver.tab:
-            return
-        try:
-            self.driver.run(self.driver.tab.verify_cf(flash=True))
-            logger.info("✓ Passed Cloudflare challenge")
-        except Exception:
-            pass
 
     def _accept_cookies(self) -> None:
         """Dismiss cookie-consent banner with a hover → click."""
-        if not self.driver.tab:
+        if not self.driver.driver:
             return
         try:
             btn = (
-                self.driver.run(
-                    self.driver.tab.find("accept", best_match=True, timeout=1)
-                )
-                or self.driver.run(
-                    self.driver.tab.find("agree", best_match=True, timeout=0.5)
-                )
+                self.driver.find_text("allow", timeout=1)
+                or self.driver.find_text("accept", timeout=1)
+                or self.driver.find_text("agree", timeout=0.5)
             )
             if btn:
-                self.driver.run(btn.mouse_move())
-                self.driver.run(self.driver.tab.sleep(0.06))
-                self.driver.run(btn.mouse_click())
+                self.driver.move_and_click(btn)
                 logger.info("✓ Accepted cookie consent")
-                self.driver.run(self.driver.tab.sleep(0.15))
+                self.driver.sleep(0.15)
         except Exception:
             logger.debug("Cookie banner not found or interaction failed (non-fatal)")
 
     def _human_scroll(self, steps: int = 2) -> None:
         """Scroll down in small random increments with pauses."""
-        if not self.driver.tab:
+        if not self.driver.driver:
             return
         try:
             for _ in range(steps):
-                self.driver.run(
-                    self.driver.tab.scroll_down(random.randint(150, 350))
-                )
-                self.driver.run(self.driver.tab.sleep(random.uniform(0.08, 0.15)))
+                self.driver.scroll(random.randint(150, 350))
+                self.driver.sleep(random.uniform(0.08, 0.15))
         except Exception as e:
             logger.debug(f"Human scroll failed (non-fatal): {e}")
 

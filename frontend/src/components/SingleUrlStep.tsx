@@ -14,6 +14,8 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
     batchSize: 1,
     enableWebScraping: true,
     skipGoogleSearch: false,
+    enablePersonSearch: true,
+    enableCompanySearch: true,
   });
 
   const parsedUrls = urlsText

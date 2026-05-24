@@ -1,7 +1,6 @@
 """High-level orchestrator that exposes scraper, searcher, and email validator."""
 
-from typing import Dict, List, Literal, Optional, Set, Tuple
-from urllib.parse import urlparse
+from typing import Dict, List, Optional, Set, Tuple
 
 from ..models import ScrapedWebData
 from ..utils.email_validators import EmailValidator
@@ -12,7 +11,7 @@ from ..utils.extractor_phone import extract_phones_from_text
 from ..utils.extractor_social_media import extract_social_links
 from ..utils.url_utils import normalize_url, validate_website_http
 from api.services.utils.logging_config import get_logger
-from .web_scraper import NoDriverDriver, PageScraper, _dedupe, extract_all_links, extract_contact_links
+from .web_scraper import SeleniumDriver, PageScraper, _dedupe, extract_all_links, extract_contact_links
 from .web_searcher import GoogleSearcher
 
 logger = get_logger("dbSeeder.web_validator")
@@ -36,7 +35,7 @@ class WebsiteEmailValidator:
         self.skip_website_search = skip_website_search
         self.site_timeout_seconds = site_timeout_seconds
 
-        self.driver: Optional[NoDriverDriver] = None
+        self.driver: Optional[SeleniumDriver] = None
         self.scraper: Optional[PageScraper] = None
         self.searcher: Optional[GoogleSearcher] = None
 
@@ -54,7 +53,7 @@ class WebsiteEmailValidator:
 
     def setup_driver(self) -> None:
         """Launch the browser and wire up scraper + searcher."""
-        self.driver = NoDriverDriver()
+        self.driver = SeleniumDriver()
         self.driver.setup()
 
         self.scraper = PageScraper(
@@ -69,7 +68,7 @@ class WebsiteEmailValidator:
             page_load_timeout_seconds=18,
         )
 
-        self.searcher.refresh_excluded(self.not_visiting_domains , self.generic_domains)
+        self.searcher.refresh_excluded(self.not_visiting_domains, self.generic_domains)
 
     def update_reference_filters(
         self,
@@ -111,20 +110,9 @@ class WebsiteEmailValidator:
     def search_google(
         self,
         query: str,
-        looking_for: Literal["website", "linkedin_profile", "linkedin_company"] = "website",
     ) -> Tuple[List[str], Optional[Dict[str, str]]]:
         """
-        Run a Google search and return URLs filtered by *looking_for*.
-
-        Args:
-            query: Raw search query (e.g. business name, person name).
-            looking_for:
-                - ``"website"``            – general web search, URLs are HTTP-validated
-                - ``"linkedin_profile"``   – appends ``site:linkedin.com/in``,
-                  skips HTTP validation (LinkedIn blocks bots), returns only
-                  ``/in/`` URLs
-                - ``"linkedin_company"``  – appends ``site:linkedin.com/company``,
-                  skips HTTP validation, returns only ``/company/`` URLs
+        Run a Google search for *query* and return URLs + optional local-panel data.
 
         Returns:
             (urls, local_panel) – same shape as ``GoogleSearcher.search``.
@@ -133,43 +121,7 @@ class WebsiteEmailValidator:
             logger.error("Searcher not initialized. Call setup_driver() first.")
             return [], None
 
-        if looking_for == "linkedin_profile":
-            full_query = f"{query} site:linkedin.com/in"
-            urls, panel = self.searcher.search(full_query, validate_urls=False)
-            filtered = [
-                url for url in urls
-                if self._is_linkedin_url(url, "/in/")
-            ]
-            logger.info(f"LinkedIn profile search returned {len(filtered)} match(es)")
-            return filtered, panel
-
-        if looking_for == "linkedin_company":
-            full_query = f"{query} site:linkedin.com/company"
-            urls, panel = self.searcher.search(full_query, validate_urls=False)
-            filtered = [
-                url for url in urls
-                if self._is_linkedin_url(url, "/company/")
-            ]
-            logger.info(f"LinkedIn company search returned {len(filtered)} match(es)")
-            return filtered, panel
-
-        # Default: general website search
         return self.searcher.search(query, validate_urls=True)
-
-    @staticmethod
-    def _is_linkedin_url(url: str, path_prefix: str) -> bool:
-        """Return True if *url* is a linkedin.com URL starting with *path_prefix*."""
-        try:
-            parsed = urlparse(url)
-            host = (parsed.netloc or "").lower()
-            if host.startswith("www."):
-                host = host[4:]
-            path = (parsed.path or "").lower()
-            return (
-                host == "linkedin.com" or host.endswith(".linkedin.com")
-            ) and path.startswith(path_prefix)
-        except Exception:
-            return False
 
     def find_contact_info_on_website(
         self,
@@ -245,10 +197,9 @@ class WebsiteEmailValidator:
 
                         page_socials = extract_social_links(html)
                         for platform, urls in page_socials.items():
-                            all_social_links[platform].update(urls)
+                            all_social_links.setdefault(platform, set()).update(urls)
 
-    
-                        # Quit after finding at least one email and one phone (heuristic: often on the same "Contact" page, no need to crawl more).
+                        # Quit after finding at least one email and one phone
                         if len(all_emails) > 0 and len(all_phones) > 0:
                             break
                     except Exception:
@@ -284,7 +235,9 @@ class WebsiteEmailValidator:
             )
 
         except Exception as exc:
-            logger.error(f"[validator] Error finding contact info: {exc}")
+            import traceback
+            logger.error(f"[validator] Error finding contact info: {exc} | {type(exc).__name__}", exc_info=True)
+            traceback.print_exc()
             return empty
 
     def prepare_next_batch(self) -> None:

@@ -24,10 +24,16 @@ class ProcessingConfig(BaseModel):
     """Number of records to insert per batch (default: 100)"""
 
     enable_web_scraping: bool = True
-    """Enable NoDriver-based web scraping to find emails/websites (default: True)"""
+    """Enable Selenium-based web scraping to find emails/websites (default: True)"""
 
     skip_google_search: bool = False
     """Skip Google search for missing websites (default: False)"""
+
+    enable_person_search: bool = True
+    """Enable web scraping + Google search for person contact info (default: True)"""
+
+    enable_company_search: bool = True
+    """Enable web scraping + Google search for company contact info (default: True)"""
 
     default_values: Optional[Dict[str, Any]] = None
     """Default values for null/empty fields"""

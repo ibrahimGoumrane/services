@@ -57,6 +57,8 @@ async def create_job(
     batch_size: int = Form(100),
     enable_web_scraping: bool = Form(True),
     skip_google_search: bool = Form(False),
+    enable_person_search: bool = Form(True),
+    enable_company_search: bool = Form(True),
     default_values: str | None = Form(None),
 ) -> CreateJobResponse:
     # Validate that exactly one input method is provided
@@ -102,6 +104,8 @@ async def create_job(
         batch_size=batch_size,
         enable_web_scraping=enable_web_scraping,
         skip_google_search=skip_google_search,
+        enable_person_search=enable_person_search,
+        enable_company_search=enable_company_search,
         default_values=_parse_json_field("default_values", default_values),
         sourcefile=source_filename,
     ).model_dump()

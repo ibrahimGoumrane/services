@@ -1,18 +1,25 @@
-"""NoDriver browser management and lifecycle"""
+"""Selenium browser management and lifecycle"""
 
-import asyncio
-import logging
 import os
 import random
-from typing import Optional, List
+import time
+from typing import Any, Optional, List
 
 from dotenv import load_dotenv
-
-load_dotenv()
-import nodriver as uc
-from nodriver import Config
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import (
+    TimeoutException,
+    NoSuchElementException,
+    InvalidSessionIdException,
+)
 from api.services.utils.log_socket import get_seeding_logger
 
+load_dotenv()
 logger = get_seeding_logger()
 
 USER_AGENTS = [
@@ -25,62 +32,139 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0",
 ]
 
+PAGE_LOAD_TIMEOUT = 18
+SCRIPT_TIMEOUT = 18
 
-class NoDriverDriver:
-    """Manages nodriver browser lifecycle."""
 
-    def __init__(self, port: int = 9222) -> None:
-        self.browser = None
-        self.tab = None
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._port = port
+class SeleniumDriver:
+    """Manages selenium + undetected-chromedriver browser lifecycle."""
+
+    def __init__(self) -> None:
+        self.driver: Optional[uc.Chrome] = None
+        self._headless = os.getenv("HEADLESS_BROWSER", "false").lower() in {"1", "true", "yes"}
+        self._version_main = int(os.getenv("CHROME_VERSION_MAIN", "148"))
         self._user_agent: str = random.choice(USER_AGENTS)
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def run(self, coro, timeout_seconds: Optional[float] = None):
-        """Execute a nodriver coroutine in the dedicated event loop."""
-        if not self._loop:
-            raise RuntimeError("Driver loop not initialized. Call setup() first.")
-        if timeout_seconds and timeout_seconds > 0:
-            coro = asyncio.wait_for(coro, timeout=timeout_seconds)
-        return self._loop.run_until_complete(coro)
-
     @property
     def current_url(self) -> str:
-        """Return the current tab URL, or an empty string if unavailable."""
-        target = getattr(self.tab, "target", None)
-        return str(getattr(target, "url", "") or "") if target else ""
+        return self.driver.current_url if self.driver else ""
+
+    @property
+    def page_source(self) -> str:
+        return self.driver.page_source if self.driver else ""
 
     def setup(self) -> None:
-        """Initialize the browser."""
-        logger.info("Setting up NoDriver browser...")
+        logger.info("Setting up Selenium browser...")
         logger.info(f"Using user agent: {self._user_agent[:60]}...")
 
-        headless = os.getenv("NODRIVER_HEADLESS", "false").lower() in {"1", "true", "yes"}
+        options = uc.ChromeOptions()
+        options.add_argument(f"--user-agent={self._user_agent}")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-browser-side-navigation")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-blink-features=AutomationControlled")
 
-        config = Config(
-            headless=headless,
-            port=self._port,
-            browser_args=[
-                f"--user-agent={self._user_agent}",
-                "--disable-dev-shm-usage",
-                "--disable-browser-side-navigation",
-            ],
-        )
+        if self._headless:
+            options.add_argument("--headless=new")
 
         try:
-            self._loop = uc.loop()
-            self.browser = self.run(uc.start(config=config))
-            self.tab = self.run(self.browser.get("about:blank"))
-            logger.info("NoDriver browser initialized successfully")
+            self.driver = uc.Chrome(options=options, version_main=self._version_main, use_subprocess=True)
+            self.driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
+            self.driver.set_script_timeout(SCRIPT_TIMEOUT)
+            self.driver.get("about:blank")
+            logger.info("Selenium browser initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize NoDriver browser: {e}")
+            logger.error(f"Failed to initialize Selenium browser: {e}")
             raise
 
+    def get(self, url: str, timeout: Optional[float] = None) -> None:
+        self._ensure_alive()
+        if timeout is not None and timeout > 0:
+            self.driver.set_page_load_timeout(timeout)
+        self.driver.get(url)
+        if timeout is not None and timeout > 0:
+            self.driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+
+    def find_text(self, text: str, timeout: float = 1.0) -> Optional[Any]:
+        self._ensure_alive()
+        try:
+            wait = WebDriverWait(self.driver, timeout)
+            return wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, f"//*[contains(text(),'{text}')]")
+                )
+            )
+        except (TimeoutException, NoSuchElementException):
+            return None
+        except InvalidSessionIdException:
+            return None
+
+    def select_css(self, css_selector: str, timeout: float = 1.5) -> Optional[Any]:
+        self._ensure_alive()
+        try:
+            wait = WebDriverWait(self.driver, timeout)
+            return wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, css_selector))
+            )
+        except (TimeoutException, NoSuchElementException):
+            return None
+        except InvalidSessionIdException:
+            return None
+
+    def move_and_click(self, element: Any) -> None:
+        self._ensure_alive()
+        try:
+            ActionChains(self.driver) \
+                .move_to_element(element) \
+                .pause(random.uniform(0.02, 0.06)) \
+                .click(element) \
+                .perform()
+        except InvalidSessionIdException:
+            pass
+
+    def scroll(self, pixels: int) -> None:
+        self._ensure_alive()
+        try:
+            self.driver.execute_script(f"window.scrollBy(0, {pixels})")
+        except InvalidSessionIdException:
+            pass
+
+    def send_enter_key(self, field: Any) -> None:
+        """Focus *field* via click, then send Enter via ActionChains."""
+        self._ensure_alive()
+        try:
+            field.click()
+            time.sleep(random.uniform(0.05, 0.1))
+            ActionChains(self.driver).send_keys(Keys.ENTER).perform()
+        except InvalidSessionIdException:
+            pass
+
+    def cleanup_tabs_for_next_batch(self) -> None:
+        self._ensure_alive()
+        if not self.driver:
+            return
+        handles = self.driver.window_handles
+        current = self.driver.current_window_handle
+        for handle in handles:
+            if handle != current:
+                self.driver.switch_to.window(handle)
+                try:
+                    self.driver.close()
+                except Exception:
+                    pass
+        if len(handles) > 1:
+            self.driver.switch_to.window(current)
+        self.driver.get("about:blank")
+
     def restart(self, reason: str = "manual") -> None:
-        """Stop the browser, then reinitialize with a fresh user agent."""
-        logger.warning(f"Restarting NoDriver browser (reason={reason})...")
+        logger.warning(f"Restarting Selenium browser (reason={reason})...")
         try:
             self.quit()
         except Exception:
@@ -88,77 +172,27 @@ class NoDriverDriver:
         self._user_agent = random.choice(USER_AGENTS)
         self.setup()
 
-    def cleanup_tabs_for_next_batch(self) -> None:
-        """Close any extra tabs and reset the working tab to about:blank."""
-        if not self.browser:
-            return
-
-        tabs: List = list(getattr(self.browser, "tabs", None) or [])
-        if isinstance(tabs, dict):
-            tabs = list(tabs.values())
-
-        for tab in tabs:
-            if tab is None or tab is self.tab:
-                continue
-            try:
-                self.run(tab.close())
-            except Exception:
-                pass
-
-        try:
-            self.tab = self.run(self.browser.get("about:blank"))
-        except Exception:
-            if self.tab:
-                try:
-                    self.run(self.tab.get("about:blank"))
-                except Exception:
-                    pass
-
     def quit(self) -> None:
-        """Stop the browser and close the loop."""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except Exception as e:
+                logger.warning(f"Error closing browser: {e}")
+            finally:
+                self.driver = None
+
+    def _is_browser_alive(self) -> bool:
+        if not self.driver:
+            return False
         try:
-            if self.browser:
-                tabs: List = list(getattr(self.browser, "tabs", None) or [])
-                if isinstance(tabs, dict):
-                    tabs = list(tabs.values())
-                for tab in tabs:
-                    if tab is None:
-                        continue
-                    try:
-                        self.run(tab.close() , timeout_seconds=1.0)
-                    except Exception:
-                        logger.warning("Error occurred while closing a tab during quit")
-                try:
-                    # Properly await disconnect to avoid 'never awaited' warnings
-                    if self.browser.connection:
-                        self.run(self.browser.connection.disconnect())
-                except (asyncio.TimeoutError, Exception):
-                    logger.warning("Timeout or error occurred while disconnecting browser")
-                self.browser.stop()
-                logger.info("NoDriver browser closed")
-        except Exception as e:
-            logger.warning(f"Error closing browser: {e}")
-        finally:
-            self.browser = None
-            self.tab = None
-            if self._loop:
-                try:
-                    # Cancel all pending tasks (e.g. update_targets) so they don't
-                    # get destroyed without warning when the loop is closed.
-                    pending = asyncio.all_tasks(self._loop)
-                    for task in pending:
-                        task.cancel()
-                    if pending:
-                        self._loop.run_until_complete(
-                             asyncio.wait_for(
-                                asyncio.gather(*pending, return_exceptions=True),
-                                timeout=1.5
-                            )
-                        )
-                except asyncio.TimeoutError:
-                    logger.warning("Timeout occurred while waiting for pending tasks")
-                try:
-                    self._loop.close()
-                except Exception:
-                    logger.warning("Error occurred while closing the event loop")
-                self._loop = None       
+            _ = self.driver.current_url
+            return True
+        except InvalidSessionIdException:
+            return False
+        except Exception:
+            return False
+
+    def _ensure_alive(self) -> None:
+        if not self._is_browser_alive():
+            logger.warning("Browser session is dead – auto-restarting…")
+            self.restart(reason="session_died")

@@ -6,18 +6,18 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from bs4 import BeautifulSoup
+from selenium.webdriver.common.by import By
 import time
 
 from api.services.database_seeding_service.src.utils.exceptions import WebsearchFailure
 from api.services.database_seeding_service.src.utils.url_utils import validate_website_http
-from .web_scraper import NoDriverDriver
+from .web_scraper import SeleniumDriver
 from api.services.utils.log_socket import get_seeding_logger
 
 logger = get_seeding_logger()
 
 # In case we need to update these in the future. 
 _SEARCH_FIELD_SELECTOR = '#APjFqb'
-_SUBMIT_BUTTON_SELECTOR = 'body > div.L3eUgb > div.o3j99.ikrT4e.KEY6ib > form > div:nth-child(1) > div > div.FPdoLc.T14B5e.iThwld > center > input.gNO89b'
 _LOCAL_PANEL_SELECTOR = 'div.zhZ3gf'
 _ORGANIC_RESULT_CONTAINER_SELECTOR = '.A6K0A'
 _ORGANIC_RESULT_ANCHOR_SELECTOR = 'a[jsname="UWckNb"]'
@@ -48,15 +48,20 @@ _GOOGLE_CAPTCHA_PHRASES = (
     "i'm not a robot",
     "recaptcha",
     "verify you are human",
+    "before you continue",
+    "verify it's you",
+    "type the text",
+    "confirm you're not a robot",
+    " automated ",
 )
 
 
 class GoogleSearcher:
-    """Google search automation with anti-bot measures (nodriver backend)."""
+    """Google search automation with anti-bot measures (selenium backend)."""
 
     def __init__(
         self,
-        driver: NoDriverDriver,
+        driver: SeleniumDriver,
         site_timeout_seconds: int = 8,
         page_load_timeout_seconds: int = 18,
     ) -> None:
@@ -64,6 +69,7 @@ class GoogleSearcher:
         self.site_timeout_seconds = site_timeout_seconds
         self.page_load_timeout_seconds = page_load_timeout_seconds
         self._excluded: List[str] = []
+
     # ── Public API ─────────────────────────────────────────────────────────
 
     def search(
@@ -78,8 +84,7 @@ class GoogleSearcher:
         Args:
             query: Raw Google search query.
             validate_urls: If ``True``, run ``validate_website_http`` on every
-                           organic result. Set to ``False`` for hosts that block
-                           bots (e.g. LinkedIn).
+                           organic result.
 
         Returns:
             (urls, local_panel)
@@ -103,6 +108,9 @@ class GoogleSearcher:
             if local_panel:
                 logger.info(f"Local panel data: {local_panel}")
             logger.info(f"Found {len(urls)} organic result(s)")
+
+            # Random delay between searches to avoid rate limiting
+            self.driver.sleep(random.uniform(2.0, 4.0))
             return urls, local_panel
 
         except Exception as exc:
@@ -116,57 +124,73 @@ class GoogleSearcher:
         Navigate to Google, type *query*, handle cookies/CAPTCHA, and return
         the raw SERP HTML.  Returns ``None`` on CAPTCHA or fatal error.
         """
-        if not self.driver.tab:
-            raise RuntimeError("Driver tab not initialized. Call setup() first.")
+        if not self.driver.driver:
+            raise RuntimeError("Driver not initialized. Call setup() first.")
 
-        self.driver.run(
-            self.driver.tab.get("https://www.google.com"),
-            timeout_seconds=self.page_load_timeout_seconds,
-        )
-        self.driver.run(self.driver.tab.sleep(random.uniform(0.2, 0.35)))
+        self.driver.get("https://www.google.com", timeout=self.page_load_timeout_seconds)
+        self.driver.sleep(random.uniform(0.2, 0.35))
 
         if not self._type_query(query):
-            # If this dont work early return
-            raise WebsearchFailure("Failed to submit search query , Verify selectors and page structure")
+            raise WebsearchFailure("Failed to submit search query, verify selectors and page structure")
 
         self._accept_cookies()
-        self.driver.run(self.driver.tab.sleep(random.uniform(0.4, 0.6)))
+        self.driver.sleep(random.uniform(0.4, 0.6))
 
         if self._google_captcha_detected():
             logger.warning("⚠️ Google CAPTCHA detected — waiting for manual resolution…")
-            
+
             while self._google_captcha_detected():
                 time.sleep(0.8)
             logger.info("✅ CAPTCHA resolved — continuing search")
 
-        html = str(
-            self.driver.run(
-                self.driver.tab.get_content(),
-                timeout_seconds=self.site_timeout_seconds,
-            )
-            or ""
-        )
+        html = self.driver.page_source or ""
         return html
 
     # ── Private: CAPTCHA detection ─────────────────────────────────────────
 
     def _google_captcha_detected(self) -> bool:
-        """
-        Return True if the current page looks like a Google CAPTCHA or
-        unusual-traffic interstitial.
-        """
-        if not self.driver.tab:
+        """Return True if the current page looks like a Google CAPTCHA or unusual-traffic interstitial."""
+        if not self.driver.driver:
             return False
+
+        # 1. Text phrase search
         for phrase in _GOOGLE_CAPTCHA_PHRASES:
             try:
-                match = self.driver.run(
-                    self.driver.tab.find(phrase, best_match=True, timeout=0.5)
-                )
-                if match:
+                if self.driver.find_text(phrase, timeout=0.5):
                     logger.warning(f"CAPTCHA phrase found: {phrase!r}")
                     return True
             except Exception:
                 pass
+
+        # 2. Page title check
+        try:
+            title = (self.driver.driver.title or "").lower()
+            if any(x in title for x in ("verify", "captcha", "robot", "unusual", "before you continue")):
+                logger.warning(f"CAPTCHA detected via page title: {title!r}")
+                return True
+        except Exception:
+            pass
+
+        # 3. Check for reCAPTCHA iframes
+        try:
+            iframes = self.driver.driver.find_elements(By.TAG_NAME, "iframe")
+            for iframe in iframes:
+                src = iframe.get_attribute("src") or ""
+                if "recaptcha" in src or "google.com/recaptcha" in src:
+                    logger.warning(f"CAPTCHA iframe detected: {src!r}")
+                    return True
+        except Exception:
+            pass
+
+        # 4. Very short HTML often means a redirect/interstitial block
+        try:
+            html_len = len(self.driver.page_source or "")
+            if html_len < 2000:
+                logger.warning(f"Suspiciously short page ({html_len} chars) — possible block page")
+                return True
+        except Exception:
+            pass
+
         return False
 
     # ── Private: typing ────────────────────────────────────────────────────
@@ -174,37 +198,27 @@ class GoogleSearcher:
     def _type_query(self, query: str) -> bool:
         """
         Fill the search field character-by-character with randomised delays,
-        then click the Search button.
+        then press Enter to submit.
         """
-        if not query or not self.driver.tab:
+        if not query or not self.driver.driver:
             return False
         try:
-            field = self.driver.run(
-                self.driver.tab.select(_SEARCH_FIELD_SELECTOR, timeout=1.5)
-            )
+            field = self.driver.select_css(_SEARCH_FIELD_SELECTOR, timeout=1.5)
             if not field:
                 return False
 
-            self.driver.run(self.driver.tab.sleep(random.uniform(0.05, 0.1)))
+            self.driver.sleep(random.uniform(0.05, 0.1))
 
             for char in query:
-                self.driver.run(field.send_keys(char))
+                field.send_keys(char)
                 delay = random.uniform(0.01, 0.03)
                 if random.random() < 0.08:
                     delay += random.uniform(0.05, 0.1)
-                self.driver.run(self.driver.tab.sleep(delay))
+                self.driver.sleep(delay)
 
-            self.driver.run(self.driver.tab.sleep(random.uniform(0.1, 0.2)))
+            self.driver.sleep(random.uniform(0.1, 0.2))
 
-            button = self.driver.run(
-                self.driver.tab.select(_SUBMIT_BUTTON_SELECTOR, timeout=0.5)
-            )
-            if not button:
-                return False
-
-            self.driver.run(button.mouse_move())
-            self.driver.run(self.driver.tab.sleep(random.uniform(0.02, 0.06)))
-            self.driver.run(button.mouse_click())
+            self.driver.send_enter_key(field)
             return True
 
         except Exception as exc:
@@ -215,23 +229,18 @@ class GoogleSearcher:
 
     def _accept_cookies(self) -> None:
         """Dismiss Google's cookie/consent banner with a hover → click."""
-        if not self.driver.tab:
+        if not self.driver.driver:
             return
         try:
             btn = (
-                self.driver.run(
-                    self.driver.tab.find("accept all", best_match=True, timeout=0.5)
-                )
-                or self.driver.run(
-                    self.driver.tab.find("accept", best_match=True, timeout=0.5)
-                )
+                self.driver.find_text("allow", timeout=0.5)
+                or self.driver.find_text("accept all", timeout=0.5)
+                or self.driver.find_text("accept", timeout=0.5)
             )
             if btn:
-                self.driver.run(btn.mouse_move())
-                self.driver.run(self.driver.tab.sleep(random.uniform(0.02, 0.06)))
-                self.driver.run(btn.mouse_click())
+                self.driver.move_and_click(btn)
                 logger.info("✓ Accepted Google cookies")
-                self.driver.run(self.driver.tab.sleep(0.12))
+                self.driver.sleep(0.12)
         except Exception as exc:
             logger.debug(f"Cookie banner: {exc}")
 
@@ -311,20 +320,20 @@ class GoogleSearcher:
                 actions[key] = href
             elif href.startswith("/"):
                 actions[key] = f"https://www.google.com{href}"
-        
+
         # Extract the address field
         container = root.select_one(_ADDRESS_CONTAINER_SELECTOR)
 
         if container:
             address_el = container.select_one(_ADDRESS_TEXT_SELECTOR)
             if address_el:
-                address = address_el.get_text(strip=True)   
+                address = address_el.get_text(strip=True)
                 if address:
-                        actions["address"] = address
-                        
+                    actions["address"] = address
+
         return actions
 
-    def refresh_excluded(self , excluded_domains , generic_domains) -> None:
+    def refresh_excluded(self, excluded_domains, generic_domains) -> None:
         """Recompute the merged exclusion list from current mutable attributes."""
         self._excluded = list(excluded_domains) + list(generic_domains)
 
@@ -336,15 +345,6 @@ class GoogleSearcher:
             if not host.endswith(required_domain):
                 return False
         return validate_website_http(url, excluded_domains=self._excluded)
-
-    def _maybe_restart_driver(self, exc: Exception) -> None:
-        if "timeout" in str(exc).lower() or "timed out" in str(exc).lower():
-            logger.warning("⚠️ Timeout detected – restarting driver...")
-            try:
-                self.driver.restart(reason="health")
-                logger.info("✅ Driver restarted")
-            except Exception as restart_exc:
-                logger.error(f"Driver restart failed: {restart_exc}")
 
 
 # ── Module-level helpers ─────────────────────────────────────────────────

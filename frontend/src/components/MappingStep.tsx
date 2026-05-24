@@ -78,6 +78,8 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
     batchSize: 5,
     enableWebScraping: true,
     skipGoogleSearch: false,
+    enablePersonSearch: true,
+    enableCompanySearch: true,
   });
   const [globalMode, setGlobalMode] = useState<"map" | "default">("map");
   const [globalDefaultValue, setGlobalDefaultValue] = useState("");
@@ -496,6 +498,50 @@ export function MappingStep({ headers, onBack, onSubmit }: MappingStepProps) {
                     }
                   />
                   <div className="w-11 h-6 bg-slate-800 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-cyan-500 peer-checked:border-transparent"></div>
+                </div>
+              </label>
+
+              <div className="h-px w-full bg-slate-800/50" />
+
+              <label className="flex items-center justify-between cursor-pointer group">
+                <span className="text-sm font-semibold text-slate-300 group-hover:text-slate-100 transition-colors">
+                  Search Person Info
+                </span>
+                <div className="relative inline-flex items-center">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={settings.enablePersonSearch}
+                    disabled={!settings.enableWebScraping}
+                    onChange={(e) =>
+                      setSettings((p) => ({
+                        ...p,
+                        enablePersonSearch: e.target.checked,
+                      }))
+                    }
+                  />
+                  <div className={`w-11 h-6 bg-slate-800 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-cyan-500 peer-checked:border-transparent ${!settings.enableWebScraping ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
+                </div>
+              </label>
+
+              <label className="flex items-center justify-between cursor-pointer group">
+                <span className="text-sm font-semibold text-slate-300 group-hover:text-slate-100 transition-colors">
+                  Search Company Info
+                </span>
+                <div className="relative inline-flex items-center">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={settings.enableCompanySearch}
+                    disabled={!settings.enableWebScraping}
+                    onChange={(e) =>
+                      setSettings((p) => ({
+                        ...p,
+                        enableCompanySearch: e.target.checked,
+                      }))
+                    }
+                  />
+                  <div className={`w-11 h-6 bg-slate-800 border border-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-cyan-500 peer-checked:border-transparent ${!settings.enableWebScraping ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
                 </div>
               </label>
             </div>

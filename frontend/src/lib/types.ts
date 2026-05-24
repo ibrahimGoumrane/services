@@ -27,6 +27,8 @@ export interface JobSettings {
   batchSize: number;
   enableWebScraping: boolean;
   skipGoogleSearch: boolean;
+  enablePersonSearch: boolean;
+  enableCompanySearch: boolean;
 }
 
 export interface UrlScrapeRequest {
