@@ -203,13 +203,10 @@ def get_contact_by_domain(url: str) -> Optional[Tuple]:
         FROM Gcontact
         WHERE url IS NOT NULL
           AND url <> ''
-          AND (
-              LOWER(url) LIKE %s
-              OR LOWER(url) LIKE %s
-          )
+          AND LOWER(url) LIKE %s
         LIMIT 1
         """,
-        (f"http://{target_domain}%", f"https://{target_domain}%"),
+        (f"%{target_domain}%",),
     )
 
 
