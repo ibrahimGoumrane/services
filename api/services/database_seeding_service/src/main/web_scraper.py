@@ -89,6 +89,24 @@ class PageScraper:
 
 # ── Module-level helpers ─────────────────────────────────────────────────
 
+CONTACT_PATH_KEYWORDS = {
+    "contact", "contact-us", "contactus", "nous-contacter", "contacter",
+    "support", "help", "help-center", "helpcenter",
+    "kontakt", "contacto", "contato", "contatti",
+}
+
+
+def _href_has_contact_keyword(href: str) -> bool:
+    """Return True if the href path contains a contact keyword."""
+    href_lower = href.lower()
+    if href_lower.startswith(("mailto:", "tel:", "javascript:", "#")):
+        return False
+    try:
+        path = urlparse(href_lower if "://" in href_lower else f"https://{href_lower}").path
+    except Exception:
+        path = href_lower
+    return any(kw in path for kw in CONTACT_PATH_KEYWORDS)
+
 
 def extract_contact_links(
     base_url: str,
@@ -96,7 +114,8 @@ def extract_contact_links(
     url_ok: Optional[Callable[[str], bool]] = None,
 ) -> List[str]:
     """
-    Return deduplicated absolute URLs whose path contains 'contact'.
+    Return deduplicated absolute URLs whose path contains a contact-page
+    keyword (e.g. contact, support, help, nous-contacter, etc.).
     Only includes URLs that pass *url_ok* when provided.
     """
     if not html:
@@ -105,12 +124,7 @@ def extract_contact_links(
     candidates: List[str] = []
     for node in soup.select("a[href]"):
         href = (node.get("href") or "").strip()
-        href_lower = href.lower()
-        if (
-            not href
-            or "contact" not in href_lower
-            or href_lower.startswith(("mailto:", "tel:", "javascript:", "#"))
-        ):
+        if not href or not _href_has_contact_keyword(href):
             continue
         absolute = urljoin(base_url, href)
         if urlparse(absolute).scheme not in {"http", "https"}:

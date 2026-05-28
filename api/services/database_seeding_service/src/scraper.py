@@ -929,6 +929,53 @@ def _sanitize_linkedin_field(csv: CsvRow) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Contact page URL detection & sanitization
+# ---------------------------------------------------------------------------
+CONTACT_PATH_KEYWORDS = {
+    "contact", "contact-us", "contactus", "nous-contacter", "contacter",
+    "support", "help", "help-center", "helpcenter",
+    "kontakt", "contacto", "contato", "contatti",
+}
+
+def _is_contact_page_url(url: Optional[str]) -> bool:
+    """Return True if the URL path contains a known contact-page keyword."""
+    if not url:
+        return False
+    raw = str(url).strip()
+    candidate = raw if "://" in raw else f"https://{raw}"
+    try:
+        path = urlparse(candidate).path.lower()
+    except Exception:
+        return False
+    return any(keyword in path for keyword in CONTACT_PATH_KEYWORDS)
+
+def _sanitize_website_for_contact_url(csv: CsvRow) -> None:
+    """
+    If *csv.website* looks like a contact-form page, move the full URL into
+    *csv.contact_form_url* and replace *csv.website* with the domain only.
+    """
+    if not csv.website or not _is_contact_page_url(csv.website):
+        return
+
+    raw = str(csv.website).strip()
+    full_url = raw if "://" in raw else f"https://{raw}"
+
+    try:
+        parsed = urlparse(full_url)
+    except Exception:
+        return
+
+    if not csv.contact_form_url:
+        csv.contact_form_url = full_url
+        logger.info(f"Detected contact page URL; stored in contact_form_url: '{full_url}'")
+
+    domain_url = f"{parsed.scheme}://{parsed.netloc}"
+    if domain_url != csv.website:
+        logger.info(f"Replacing website with domain only: '{csv.website}' → '{domain_url}'")
+        csv.website = domain_url
+
+
+# ---------------------------------------------------------------------------
 # Main row processor
 # ---------------------------------------------------------------------------
 
@@ -969,10 +1016,11 @@ def _process_contact_row(
         return None, row_stats, extra_contacts
 
     # ------------------------------------------------------------------
-    # 3. Sanitise LinkedIn fields
+    # 3. Sanitize fields
     # ------------------------------------------------------------------
     _sanitize_linkedin_field(csv)
     _handle_linkedin_in_website(csv)
+    _sanitize_website_for_contact_url(csv)
 
     # ------------------------------------------------------------------
     # 4. Shared scraped cache (URL -> ScrapedWebData) for cross-path dedup
