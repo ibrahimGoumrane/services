@@ -44,6 +44,7 @@ class PageScraper:
         self.driver.get(url, timeout=self.page_load_timeout_seconds)
         self.driver.sleep(0.3)
 
+        self._handle_http_proceed(url)
         self._accept_cookies()
         self._human_scroll()
 
@@ -86,6 +87,20 @@ class PageScraper:
         except Exception as e:
             logger.debug(f"Human scroll failed (non-fatal): {e}")
 
+    def _handle_http_proceed(self, url: str) -> None:
+        """Handle HTTP warning/redirect pages with a #proceed-link element."""
+        if not url.startswith("http://"):
+            return
+        if not self.driver.driver:
+            return
+        try:
+            proceed_link = self.driver.select_css("a#proceed-link", timeout=3.0)
+            if proceed_link:
+                logger.info(f"[scrape] Clicking #proceed-link for HTTP site: {url}")
+                self.driver.move_and_click(proceed_link)
+                self.driver.sleep(0.5)
+        except Exception as e:
+            pass
 
 # ── Module-level helpers ─────────────────────────────────────────────────
 

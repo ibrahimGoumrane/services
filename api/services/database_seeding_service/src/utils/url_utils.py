@@ -122,12 +122,13 @@ def is_excluded_domain(url: str, excluded_domains: list) -> bool:
 
 def validate_website_http(
     url: str,
-    timeout: int = 1.5,
+    timeout: int = 12,
     allow_pdf: bool = False,
     excluded_domains: list[str] | None = None,
 ) -> bool:
     """
     Check if a website is accessible via HTTP GET request.
+    Falls back to HTTPS when the original HTTP request fails.
     
     Args:
         url: Website URL to check
@@ -151,39 +152,49 @@ def validate_website_http(
         logger.warning(f"✗ Skipping downloadable file URL: {url}")
         return False
 
-    try:
-        response = requests.get(url, timeout=timeout, allow_redirects=True, headers=_DEFAULT_HEADERS)
+    def _try_request(check_url: str) -> bool:
+        try:
+            response = requests.get(check_url, timeout=timeout, allow_redirects=True, headers=_DEFAULT_HEADERS)
 
-        final_url = response.url or url
-        if excluded_domains and is_excluded_domain(final_url, excluded_domains):
-            logger.warning(f"✗ Redirected to excluded domain: {final_url}")
-            return False
+            final_url = response.url or check_url
+            if excluded_domains and is_excluded_domain(final_url, excluded_domains):
+                logger.warning(f"✗ Redirected to excluded domain: {final_url}")
+                return False
 
-        if is_downloadable_file_url(final_url) and not allow_pdf:
-            logger.warning(f"✗ Redirected to downloadable file: {final_url}")
-            return False
+            if is_downloadable_file_url(final_url) and not allow_pdf:
+                logger.warning(f"✗ Redirected to downloadable file: {final_url}")
+                return False
 
-        # Keep only HTML pages for scraping when file downloads are not allowed.
-        content_type = response.headers.get('Content-Type', '').lower()
-        if not allow_pdf and content_type and 'text/html' not in content_type:
-            logger.warning(f"✗ Skipping non-HTML content: {final_url} ({content_type})")
-            return False
+            content_type = response.headers.get('Content-Type', '').lower()
+            if not allow_pdf and content_type and 'text/html' not in content_type:
+                logger.warning(f"✗ Skipping non-HTML content: {final_url} ({content_type})")
+                return False
+            
+            if response.status_code == 200:
+                if final_url != check_url:
+                    logger.info(f"✓ Website accessible after redirect: {check_url} -> {final_url}")
+                logger.info(f"✓ Website accessible: {check_url}")
+                return True
+            else:
+                logger.warning(f"✗ Website returned status {response.status_code}: {check_url}")
+                return False
         
-        if response.status_code == 200:
-            if final_url != url:
-                logger.info(f"✓ Website accessible after redirect: {url} -> {final_url}")
-            logger.info(f"✓ Website accessible: {url}")
-            return True
-        else:
-            logger.warning(f"✗ Website returned status {response.status_code}: {url}")
+        except requests.exceptions.Timeout:
+            logger.warning(f"✗ Website timeout: {check_url}")
             return False
-    
-    except requests.exceptions.Timeout:
-        logger.warning(f"✗ Website timeout: {url}")
-        return False
-    except requests.exceptions.ConnectionError:
-        logger.warning(f"✗ Website connection error: {url}")
-        return False
-    except Exception as e:
-        logger.warning(f"✗ Website error: {url} - {e}")
-        return False
+        except requests.exceptions.ConnectionError:
+            logger.warning(f"✗ Website connection error: {check_url}")
+            return False
+        except Exception as e:
+            logger.warning(f"✗ Website error: {check_url} - {e}")
+            return False
+
+    if _try_request(url):
+        return True
+
+    if url.startswith("http://"):
+        https_url = url.replace("http://", "https://", 1)
+        logger.info(f"Retrying with HTTPS: {https_url}")
+        return _try_request(https_url)
+
+    return False

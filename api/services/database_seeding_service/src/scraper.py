@@ -24,7 +24,7 @@ from api.services.database_seeding_service.src.utils.extractor_social_media impo
 from api.services.database_seeding_service.src.utils.exceptions import JobInterruptionRequested, WebsearchFailure
 logger = get_logger(__name__)
 
-SITE_TIMEOUT_SECONDS = 12
+SITE_TIMEOUT_SECONDS = 20
 PERIODIC_BROWSER_RESTART_BATCHES = 100
 _COMPANY_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "tmp", "company")
 COMPANY_CACHE_FILE = os.path.join(_COMPANY_CACHE_DIR, "company_cache.json")
@@ -335,14 +335,18 @@ def _resolve_all_websites(
 
     if website:
         if not validator.validate_website(website):
-            logger.info(f"Website rejected by validator: {website}")
-            return [], None, None
+            is_http = website.startswith("http://")
+            if is_http:
+                logger.warning(f"Website rejected by validator (HTTP, will retry via Selenium): {website}")
+            else:
+                logger.info(f"Website rejected by validator: {website}")
+                return [], None, None
 
-        exact_match = contact_repository.get_contact_by_exact_url(website)
-        if exact_match:
-            logger.info("Exact URL already scraped; reusing stored fields")
-            _populate_from_db(exact_match, csv)
-            return [], None, None
+        # exact_match = contact_repository.get_contact_by_exact_url(website)
+        # if exact_match:
+        #     logger.info("Exact URL already scraped; reusing stored fields")
+        #     _populate_from_db(exact_match, csv)
+        #     return [], None, None
 
         existing = contact_repository.get_contact_by_domain(website)
         if existing:
