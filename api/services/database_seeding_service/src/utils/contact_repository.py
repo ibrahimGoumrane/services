@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 
 from mysql.connector import pooling
 
-from .url_utils import extract_domain
+from .url_utils import extract_domain, normalize_url
 
 
 CONTACT_COLUMNS = [
@@ -210,6 +210,28 @@ def get_contact_by_domain(url: str) -> Optional[Tuple]:
     )
 
 
+    return row
+
+
+def get_contact_by_exact_url(url: str) -> Optional[Tuple]:
+    """Get one contact row whose stored URL matches the given URL exactly (normalized)."""
+    if not url:
+        return None
+
+    normalized = normalize_url(url).lower().rstrip("/")
+    variants = {normalized}
+    if "://www." in normalized:
+        variants.add(normalized.replace("://www.", "://"))
+    else:
+        parts = normalized.split("://", 1)
+        if len(parts) == 2:
+            variants.add(f"{parts[0]}://www.{parts[1]}")
+
+    placeholders = ",".join(["%s"] * len(variants))
+    row = get_one(
+        f"SELECT {CONTACT_COLUMNS_SQL} FROM Gcontact WHERE LOWER(url) IN ({placeholders}) LIMIT 1",
+        tuple(variants),
+    )
     return row
 
 

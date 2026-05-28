@@ -279,85 +279,40 @@ def _populate_from_db(
         csv.country = str(db_country).strip()
 
 
+_SCRAPABLE_COLUMN_INDICES = frozenset([
+    0,   # email
+    1,   # fullname (from scraped.person_name)
+    6,   # phone
+    9,   # name (from scraped.company_name)
+    10,  # address (from scraped.location)
+    11,  # city
+    13,  # country
+    14,  # urlcontactform
+    15,  # linkedin
+    24,  # whatsapp
+    25,  # facebook
+    26,  # instagram
+    27,  # tiktok
+    28,  # youtube
+    29,  # telegram
+    30,  # calendly
+    31,  # twitter
+    32,  # signal
+    33,  # urls
+])
+
+
+def _is_db_record_scrape_complete(db_row: Tuple) -> bool:
+    return all(
+        db_row[i] is not None and str(db_row[i]).strip() != ""
+        for i in _SCRAPABLE_COLUMN_INDICES
+        if i < len(db_row)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Website resolution (shared between person and company paths)
 # ---------------------------------------------------------------------------
-
-def _resolve_website(
-    csv: CsvRow,
-    validator: WebsiteEmailValidator,
-    type : Literal["person", "company"] = "person"
-) -> Tuple[str, bool, Optional[Dict[str, str]], Optional[Dict[str, Set[str]]]]:
-    """
-    Return *(resolved_url, needs_scraping, local_panel, social_links_from_candidates)*.
-
-    Checks in order:
-      1. CSV-provided URL → validate → if valid skip google search → DB dedup check
-      2. Google search by company name and full name → validate → DB dedup check
-
-    Back-fills *csv* from DB when the domain already exists.
-    local_panel contains Google My Business data (phone, directions, etc.) if available.
-    social_links_from_candidates contains social URLs found in *all* Google results,
-    including those that were discarded by the domain filter (e.g. LinkedIn).
-    """
-    website = csv.website
-
-    if website:
-        website_valid = True
-        if not validator.validate_website(website):
-            logger.info(f"Website rejected by validator: {website}")
-            # We wont return now because we can still find a valid website.
-            website_valid = False
-
-        existing = contact_repository.get_contact_by_domain(website)
-        if existing and website_valid:
-            logger.info("Website domain already in DB; reusing stored fields")
-            _populate_from_db(existing, csv)
-            return website, False, None, None
-        if website_valid:
-            return website, True, None, None
-
-    # No URL from CSV – try Google search by company name
-    search_social_links: Optional[Dict[str, Set[str]]] = None
-    if not validator.skip_website_search and (csv.name):
-        search_query = ""
-        if type == "person":
-            if csv.fullname:
-                search_query = f"{csv.fullname} {csv.name}"
-            else:
-                search_query = f"{csv.fname} {csv.lname} {csv.name}"
-        else:
-            search_query = f"{csv.name} {csv.location}"
-        logger.info(f"Website search: '{search_query}'")
-        urls, local_panel = validator.search_google(search_query)
-
-        # Prefer the local-panel website, then fall back to organic results
-        candidates: List[str] = []
-        if local_panel and local_panel.get("website"):
-            candidates.append(local_panel["website"])
-        candidates.extend(urls)
-
-        # Extract social links from ALL candidates (including excluded domains)
-        if candidates:
-            search_social_links = extract_social_links_from_urls(candidates)
-            if search_social_links:
-                logger.info(
-                    f"Social links found in search candidates: "
-                    f"{', '.join(f'{k}={len(v)}' for k, v in search_social_links.items())}"
-                )
-
-        for candidate in candidates:
-            if validator.validate_website(candidate):
-                logger.info(f"Website search SUCCESS: '{candidate}'")
-                existing = contact_repository.get_contact_by_domain(candidate)
-                if existing:
-                    logger.info("Website domain (search result) already in DB; reusing stored fields")
-                    _populate_from_db(existing, csv)
-                    return candidate, False, local_panel, search_social_links
-                return candidate, True, local_panel, search_social_links
-
-    return "", False, None, search_social_links
-
 
 def _resolve_all_websites(
     csv: CsvRow,
@@ -382,11 +337,22 @@ def _resolve_all_websites(
         if not validator.validate_website(website):
             logger.info(f"Website rejected by validator: {website}")
             return [], None, None
+
+        exact_match = contact_repository.get_contact_by_exact_url(website)
+        if exact_match:
+            logger.info("Exact URL already scraped; reusing stored fields")
+            _populate_from_db(exact_match, csv)
+            return [], None, None
+
         existing = contact_repository.get_contact_by_domain(website)
         if existing:
             logger.info("Website domain already in DB; reusing stored fields")
             _populate_from_db(existing, csv)
-            return [], None, None
+            if _is_db_record_scrape_complete(existing):
+                logger.info("Existing DB record is complete; skipping scrape")
+                return [], None, None
+            logger.info("Existing DB record incomplete; will scrape to fill gaps")
+            return [website], None, None
         return [website], None, None
 
     search_social_links: Optional[Dict[str, Set[str]]] = None
@@ -1546,7 +1512,7 @@ def process_single_url_seeding(
                     enable_web_scraping=enable_web_scraping,
                     skip_google_search=skip_google_search,
                     enable_person_search=enable_person_search,
-                    enable_company_search=enable_company_search,
+                    enable_company_search=False,
                     sourcefile=sourcefile,
                 ),
             )
