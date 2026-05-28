@@ -85,9 +85,20 @@ class SeleniumDriver:
         self._ensure_alive()
         if timeout is not None and timeout > 0:
             self.driver.set_page_load_timeout(timeout)
-        self.driver.get(url)
-        if timeout is not None and timeout > 0:
-            self.driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
+        try:
+            self.driver.get(url)
+        except TimeoutException:
+            logger.warning(
+                f"Page load timed out after {timeout}s for {url}, "
+                "stopping load and continuing with partial content..."
+            )
+            try:
+                self.driver.execute_script("window.stop()")
+            except Exception:
+                pass
+        finally:
+            if timeout is not None and timeout > 0:
+                self.driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
 
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
