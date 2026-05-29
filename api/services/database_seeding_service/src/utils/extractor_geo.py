@@ -24,41 +24,33 @@ logger = get_seeding_logger()
 # Address prefix regex fallback patterns
 # ---------------------------------------------------------------------------
 _ADDRESS_PREFIXES = [
-    r"rue", r"avenue", r"ave", r"av\.", r"immeuble", r"cours", r"tour",
-    r"residence", r"res", r"Route", r"Park", r"Street", r"allée",
-    r"boulevard", r"bd", r"cedex", r"cité", r"imm", r"Building",
-    r"Coopérative", r"North", r"South", r"East", r"West", r"No ",
-    r"one", r"two", r"three", r"four", r"five", r"six", r"seven",
-    r"eight", r"nine", r"ten", r"eleven", r"twelve", r".{3,5}teen",
-    r"twenty", r"thirty", r"fourty", r"fifty", r"seventy", r"eighty",
-    r"ninety", r"PO", r"P\.O\.", r"Post Office", r"BP", r"b\.p\.",
-    r"Postal", r"z\.i\.", r"ZI", r"Rural", r"Parc", r"Etage", r"étage",
-    r"unit", r"drive", r"Road", r"Rd", r"plot", r"lot", r"5th", r"Floor",
-    r"place", r"square", r"chemin", r"impasse", r"passage", r"rond-point",
-    r"quai", r"port", r"zone", r"lotissement", r"résidence", r"bâtiment",
-    r"escalier", r"appartement", r"apt", r"porte", r"entrée", r"galerie",
-    r"centre", r"centre commercial", r"Lane", r"Ln", r"Court", r"Ct",
-    r"Circle", r"Cir", r"Terrace", r"Ter", r"Plaza", r"Pl", r"Way",
-    r"Highway", r"Hwy", r"Blvd", r"Boulevard", r"Suite", r"Ste",
-    r"Apartment", r"Tower", r"Block", r"Bldg", r"Square", r"Sq",
-    r"Box", r"PMB", r"1st", r"2nd", r"3rd", r"4th", r"north",
-    r"south", r"east", r"west", r"numéro", r"numero", r"bis", r"ter",
-    r"route nationale", r"route départementale", r"RN", r"RD",
-    r"autoroute", r"péage", r"sortie", r"Code Postal", r"CP",
+    # EN — unambiguous
+    r"\bblvd\b", r"\bhwy\b", r"\bave\.\b", r"\brd\.\b", r"\bst\.\b",
+    r"\bPO\s+Box\b", r"\bP\.O\.\b", r"\bapt\.?\b", r"\bste\.\b",
+    r"\d+(?:st|nd|rd|th)\s+(?:floor|street|ave)\b",
+
+    # FR — unambiguous  
+    r"\brue\b", r"\ballée\b", r"\bimpasse\b", r"\brond-point\b",
+    r"\bbâtiment\b", r"\bimmeuble\b", r"\blotissement\b",
+    r"\bBP\s+\d", r"\bcedex\b", r"\bcode postal\b",
 ]
 
-_TEXT_TAGS = {
-    "p", "div", "span", "h1", "h2", "h3", "h4", "h5", "h6",
-    "li", "td", "th", "a", "strong", "em", "b", "i", "label",
-    "dt", "dd", "figcaption", "blockquote", "section", "article",
-    "header", "footer", "address", "nav", "pre", "code", "small",
-    "caption", "summary",
-}
-
+# No need for \b in the outer pattern anymore since each prefix has its own
 _ADDRESS_RE = re.compile(
-    r"(?:" + "|".join(_ADDRESS_PREFIXES) + r")",
+    "|".join(_ADDRESS_PREFIXES),
     re.IGNORECASE,
 )
+
+_TEXT_TAGS = {
+    # Semantic address containers (high confidence)
+    "address",
+    # Table cells (common in contact/profile pages)
+    "td", "th",
+    # Labeled fields (forms, profile cards)
+    "label", "dt", "dd",
+    # Generic text blocks (only ones likely to contain full addresses)
+    "p", "li", "span",
+}
 
 def _strip_html(html: str) -> str:
     """Parse HTML and return clean text for NER processing. Remove headers, scripts, styles, and excessive whitespace."""
@@ -114,10 +106,10 @@ def _extract_with_locationtagger(
     text: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """
-    Extract (address, country, city, zip_code) using locationtagger.
+    Extract (country, city, zip_code) using locationtagger.
     """
     if not text:
-        return None, None, None, None
+        return None, None, None
     # --- country ---
     first_country = None
     first_city = None
@@ -135,19 +127,15 @@ def _extract_with_locationtagger(
         # Apply filtering and scoring to handle multiple candidates and boost paired mentions
         countries, cities = _filter_locations(entities, text)
         first_country, first_city = _score_locations(countries, cities, entities.country_cities)
-
-        # --- address ---
-        address = ", ".join(filter(None, [first_city, first_country]))
-
         logger.debug(
             f"locationtagger — country={first_country!r} city={first_city!r}"
         )
 
         # --- zip , country , city fallbacks via geopy ---
         zip_code = None
-        if address:
+        if first_city or first_country:
             geolocator = Nominatim(user_agent="formafast_geo")
-            location = geolocator.geocode(address, addressdetails=True)
+            location = geolocator.geocode(", ".join(filter(None, [first_city, first_country])), addressdetails=True)
             if location:
                 # Step 2: reverse geocode using coordinates for richer address data
                 reversed_location = geolocator.reverse(
@@ -163,23 +151,22 @@ def _extract_with_locationtagger(
                     if not first_city:
                         first_city = addr.get("city") or addr.get("town") or addr.get("village")
 
-        return address, first_country, first_city, zip_code
+        return first_country, first_city, zip_code
 
     except Exception as exc:
         logger.debug(f"locationtagger extraction failed: {exc}", exc_info=True)
-        return None, None, None, None
+        return None, None, None
 
 
 def _regex_extract_address(
     html: Optional[str],
-) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+) -> tuple[Optional[str]]:
     """Fallback extraction using address prefix regex patterns.
-    Searches HTML elements for address-like text, then passes the matched
-    text to locationtagger to decompose into city/country/zip if possible.
-    Falls back to returning just the full address with other fields None.
+    Searches HTML elements for address-like text and returns it as the
+    location field. Does not attempt to decompose into city/country/zip.
     """
     if not html:
-        return None, None, None, None
+        return None
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup.find_all(_TEXT_TAGS):
         text = tag.get_text(" ", strip=True)
@@ -187,12 +174,8 @@ def _regex_extract_address(
             continue
         if _ADDRESS_RE.search(text):
             logger.debug(f"Address regex match in <{tag.name}>: {text[:120]}...")
-            try:
-                return _extract_with_locationtagger(text=text)
-            except Exception as exc:
-                logger.debug(f"locationtagger decomposition failed on address match: {exc}")
-                return text, None, None, None
-    return None, None, None, None
+            return text
+    return None
 
 
 def extract_location_city_country(
@@ -205,13 +188,7 @@ def extract_location_city_country(
         return None, None, None, None
 
     plain_text = _strip_html(html)  # ← strip HTML before NER
-    address, country, city, zip_code = _extract_with_locationtagger(text=plain_text)
-
-    if not address or not city or not country:
-        regex_addr, regex_country, regex_city, regex_zip = _regex_extract_address(html)
-        address = address or regex_addr
-        country = country or regex_country
-        city = city or regex_city
-        zip_code = zip_code or regex_zip
+    country, city, zip_code = _extract_with_locationtagger(text=plain_text)
+    address = _regex_extract_address(html)
 
     return address, city, country, zip_code

@@ -960,16 +960,17 @@ CONTACT_PATH_KEYWORDS = {
 }
 
 def _is_contact_page_url(url: Optional[str]) -> bool:
-    """Return True if the URL path contains a known contact-page keyword."""
+    """Return True if the URL path or query contains a known contact-page keyword."""
     if not url:
         return False
     raw = str(url).strip()
     candidate = raw if "://" in raw else f"https://{raw}"
     try:
-        path = urlparse(candidate).path.lower()
+        parsed = urlparse(candidate)
+        target = f"{parsed.path}?{parsed.query}".lower()
     except Exception:
         return False
-    return any(keyword in path for keyword in CONTACT_PATH_KEYWORDS)
+    return any(keyword in target for keyword in CONTACT_PATH_KEYWORDS)
 
 def _sanitize_website_for_contact_url(csv: CsvRow) -> None:
     """

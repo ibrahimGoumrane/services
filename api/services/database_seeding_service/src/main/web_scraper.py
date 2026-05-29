@@ -112,15 +112,16 @@ CONTACT_PATH_KEYWORDS = {
 
 
 def _href_has_contact_keyword(href: str) -> bool:
-    """Return True if the href path contains a contact keyword."""
+    """Return True if the href path or query contains a contact keyword."""
     href_lower = href.lower()
     if href_lower.startswith(("mailto:", "tel:", "javascript:", "#")):
         return False
     try:
-        path = urlparse(href_lower if "://" in href_lower else f"https://{href_lower}").path
+        parsed = urlparse(href_lower if "://" in href_lower else f"https://{href_lower}")
+        target = f"{parsed.path}?{parsed.query}".lower()
     except Exception:
-        path = href_lower
-    return any(kw in path for kw in CONTACT_PATH_KEYWORDS)
+        target = href_lower
+    return any(kw in target for kw in CONTACT_PATH_KEYWORDS)
 
 
 def extract_contact_links(

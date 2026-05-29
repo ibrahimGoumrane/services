@@ -167,7 +167,10 @@ class WebsiteEmailValidator:
             all_page_links = extract_all_links(website_url, homepage_html)
 
             # ── 2. Crawl contact pages if missing information ─────────
-            if len(all_emails) > 0 and len(all_phones) > 0 and len(all_social_links.keys()) > 0 and (location or city or country):
+            if (len(all_emails) > 0 and len(all_phones) > 0 
+                and len(all_social_links.keys()) >= 5
+                and (location or city or country)
+                and person_name and company_name):
                 logger.info(
                     "[validator] Home page has all required information; skipping contact-page crawl"
                 )
