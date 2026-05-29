@@ -44,6 +44,18 @@ def _format_reference_preview(values: set[str], limit: int = 5) -> str:
     return f"{preview}{suffix}"
 
 
+def _domain_to_name(url: str) -> str:
+    """Extract a human-readable name from a domain, stripping the TLD."""
+    if not url:
+        return ""
+    domain = extract_domain(url)
+    if not domain:
+        return ""
+    name_part = domain.rsplit(".", 1)[0]
+    name_part = name_part.replace("-", " ").replace("_", " ")
+    return name_part.strip().title()
+
+
 def _slugify_for_email(value: str) -> str:
     raw = (value or "").strip().lower()
     if not raw:
@@ -585,6 +597,9 @@ def _enrich_person(
         person.fullname = scraped.person_name
     if not person.name and scraped.company_name:
         person.name = scraped.company_name
+    if not person.name and website:
+        person.name = _domain_to_name(website)
+        logger.info(f"Name fallback from domain: '{person.name}'")
 
     # --- Synthetic e-mail fallback ----------------------------------------
     if not person.email or "@" not in person.email:
@@ -748,6 +763,9 @@ def _enrich_company(
     # --- Names extracted from website text ---------------------------------
     if not company.name and scraped.company_name:
         company.name = scraped.company_name
+    if not company.name and website:
+        company.name = _domain_to_name(website)
+        logger.info(f"Company name fallback from domain: '{company.name}'")
 
     # --- Synthetic e-mail fallback ----------------------------------------
     if not company.email or "@" not in company.email:

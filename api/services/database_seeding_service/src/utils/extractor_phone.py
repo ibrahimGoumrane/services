@@ -12,7 +12,7 @@ load_dotenv()
 
 logger = get_seeding_logger()
 
-_FALLBACK_REGIONS = "US,GB,FR,DE,CA,AU,NL,BE,CH"
+_FALLBACK_REGIONS = "US,GB,FR,DE,CA,AU,NL,BE,CH,SA,AE,QA,KW,BH,OM,EG,JO,LB,MA,TN,DZ"
 DEFAULT_REGIONS = [
     r.strip()
     for r in os.getenv("PHONE_EXTRACTION_REGIONS", _FALLBACK_REGIONS).split(",")
@@ -20,14 +20,25 @@ DEFAULT_REGIONS = [
 ]
 
 
+_ARABIC_TO_WESTERN = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+
+
+def _normalize_numerals(text: str) -> str:
+    """Convert Arabic (Eastern) numerals to Western numerals for phone parsing."""
+    if not text:
+        return text
+    return text.translate(_ARABIC_TO_WESTERN)
+
+
 def _visible_text(html: str) -> str:
-    """Strip non-visible nodes and return plain text."""
+    """Strip non-visible nodes, convert arabic numerals, and return plain text."""
     if not html:
         return ""
     soup = BeautifulSoup(html, "html.parser")
     for node in soup(["script", "style", "noscript", "svg"]):
         node.decompose()
-    return soup.get_text(" ", strip=True)
+    raw = soup.get_text(" ", strip=True)
+    return _normalize_numerals(raw)
 
 
 def extract_phones_from_text(html: Optional[str]) -> List[str]:
