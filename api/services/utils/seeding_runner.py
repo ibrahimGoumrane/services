@@ -33,7 +33,7 @@ async def run_seed_job(job_id: str) -> None:
                     enable_web_scraping=bool(job.payload.get("enable_web_scraping", True)),
                     skip_google_search=bool(job.payload.get("skip_google_search", False)),
                     enable_person_search=bool(job.payload.get("enable_person_search", True)),
-                    enable_company_search=bool(job.payload.get("enable_company_search", True)),
+                    enable_debugging=bool(job.payload.get("enable_debugging", False)),
                     sourcefile=job.payload.get("sourcefile"),
                     job_id=job_id,
                 )

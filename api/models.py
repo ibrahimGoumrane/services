@@ -96,6 +96,7 @@ class SeedDatabaseRequest(BaseModel):
     skip_google_search: bool = False
     enable_person_search: bool = True
     enable_company_search: bool = True
+    enable_debugging: bool = False
     default_values: dict[str, Any] | None = None
     sourcefile: str | None = None
 
@@ -104,6 +105,7 @@ class UrlScrapeRequest(BaseModel):
     urls: list[str]
     enable_web_scraping: bool = True
     skip_google_search: bool = False
+    enable_debugging: bool = False
     sourcefile: str | None = None
 
     @field_validator("urls")

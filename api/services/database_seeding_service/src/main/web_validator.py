@@ -10,11 +10,11 @@ from ..utils.extractor_name import extract_name_company
 from ..utils.extractor_phone import extract_phones_from_text
 from ..utils.extractor_social_media import extract_social_links
 from ..utils.url_utils import normalize_url, validate_website_http
-from api.services.utils.logging_config import get_logger
 from .web_scraper import SeleniumDriver, PageScraper, _dedupe, extract_all_links, extract_contact_links
 from .web_searcher import GoogleSearcher
+from api.services.utils.logging_config import get_seeding_logger
 
-logger = get_logger("dbSeeder.web_validator")
+logger = get_seeding_logger("dbSeeder.web_validator")
 
 
 class WebsiteEmailValidator:

@@ -33,7 +33,7 @@ def seed_single_url(
     enable_web_scraping: bool = True,
     skip_google_search: bool = False,
     enable_person_search: bool = True,
-    enable_company_search: bool = True,
+    enable_debugging: bool = False,
     sourcefile: str | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
@@ -45,7 +45,7 @@ def seed_single_url(
         enable_web_scraping=enable_web_scraping,
         skip_google_search=skip_google_search,
         enable_person_search=enable_person_search,
-        enable_company_search=enable_company_search,
+        enable_debugging=enable_debugging,
         sourcefile=sourcefile,
         job_id=job_id,
     )

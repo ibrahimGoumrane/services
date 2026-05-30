@@ -59,6 +59,7 @@ async def create_job(
     skip_google_search: bool = Form(False),
     enable_person_search: bool = Form(True),
     enable_company_search: bool = Form(True),
+    enable_debugging: bool = Form(False),
     default_values: str | None = Form(None),
 ) -> CreateJobResponse:
     # Validate that exactly one input method is provided
@@ -106,6 +107,7 @@ async def create_job(
         skip_google_search=skip_google_search,
         enable_person_search=enable_person_search,
         enable_company_search=enable_company_search,
+        enable_debugging=enable_debugging,
         default_values=_parse_json_field("default_values", default_values),
         sourcefile=source_filename,
     ).model_dump()
@@ -125,6 +127,7 @@ async def create_url_job(payload: UrlScrapeRequest) -> CreateJobResponse:
         "target_urls": payload.urls,
         "enable_web_scraping": payload.enable_web_scraping,
         "skip_google_search": payload.skip_google_search,
+        "enable_debugging": payload.enable_debugging,
         "sourcefile": payload.sourcefile,
     }
 

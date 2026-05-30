@@ -8,9 +8,9 @@ from bs4 import BeautifulSoup
 
 from ..utils.driver import SeleniumDriver
 from ..utils.url_utils import normalize_url
-from api.services.utils.logging_config import get_logger
+from api.services.utils.logging_config import get_seeding_logger
 
-logger = get_logger("dbSeeder.web_scraper")
+logger = get_seeding_logger("dbSeeder.web_scraper")
 
 MAX_CONTENT_LENGTH = 3_000_000  # 2MB
 
@@ -129,28 +129,30 @@ def extract_contact_links(
     html: str,
     url_ok: Optional[Callable[[str], bool]] = None,
 ) -> List[str]:
-    """
-    Return deduplicated absolute URLs whose path contains a contact-page
-    keyword (e.g. contact, support, help, nous-contacter, etc.).
-    Only includes URLs that pass *url_ok* when provided.
-    """
     if not html:
         return []
+
     soup = BeautifulSoup(html, "html.parser")
-    candidates: List[str] = []
+    candidates = set()
+
     for node in soup.select("a[href]"):
         href = (node.get("href") or "").strip()
+
         if not href or not _href_has_contact_keyword(href):
             continue
+
         absolute = urljoin(base_url, href)
+
         if urlparse(absolute).scheme not in {"http", "https"}:
             continue
+        
         normalized = normalize_url(absolute)
         if url_ok and not url_ok(normalized):
-            continue
-        candidates.append(normalized)
+            continue   
+         
+        candidates.add(normalized)
 
-    return _dedupe(candidates)
+    return list(candidates)
 
 
 def _dedupe(values: List[str]) -> List[str]:

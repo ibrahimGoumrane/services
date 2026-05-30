@@ -8,12 +8,13 @@ from typing import Generator
 from api.services.utils.logging_config import (
     attach_websocket_log_handler,
     detach_websocket_log_handler,
+    get_seeding_logger as _get_seeding_logger,
 )
 
 
 def get_seeding_logger() -> logging.Logger:
-    """Return the dedicated dbSeeder logger with propagation disabled."""
-    seeding_logger = logging.getLogger("dbSeeder")
+    """Return the dedicated dbSeeder logger with DebugFilter and propagation disabled."""
+    seeding_logger = _get_seeding_logger("dbSeeder")
     seeding_logger.propagate = False
     return seeding_logger
 

@@ -17,13 +17,13 @@ from api.models import CsvMapping
 from api.services.database_seeding_service.src.models import ProcessingConfig
 from api.services.database_seeding_service.src.utils import contact_repository, data_transformers, email_classifiers, mx_resolver
 from api.services.database_seeding_service.src.utils.contact_repository import CONTACT_COLUMNS_MAP
-from api.services.utils.logging_config import flush_buffered_log_handlers, get_logger, setup_logging
+from api.services.utils.logging_config import flush_buffered_log_handlers, get_seeding_logger, set_debugging, setup_logging
 from api.services.database_seeding_service.src.utils.tld_country_mapper import get_country_from_email_domain
 from api.services.database_seeding_service.src.utils.url_utils import extract_domain
 from api.services.database_seeding_service.src.main.web_validator import WebsiteEmailValidator
 from api.services.database_seeding_service.src.utils.extractor_social_media import extract_social_links_from_urls
 from api.services.database_seeding_service.src.utils.exceptions import JobInterruptionRequested, WebsearchFailure
-logger = get_logger(__name__)
+logger = get_seeding_logger(__name__)
 
 SITE_TIMEOUT_SECONDS = 20
 PERIODIC_BROWSER_RESTART_BATCHES = 100
@@ -1225,6 +1225,8 @@ def process_database_seeding(
         module_name="dbSeeder", job_id=job_id, max_size=config.batch_size
     )
 
+    set_debugging(config.enable_debugging)
+
     logger.info(
         "SEED_START "
         f"job_id={job_id or 'none'} "
@@ -1515,13 +1517,15 @@ def process_single_url_seeding(
     enable_web_scraping: bool = True,
     skip_google_search: bool = False,
     enable_person_search: bool = True,
-    enable_company_search: bool = True,
+    enable_debugging: bool = False,
     sourcefile: str | None = None,
     job_id: str | None = None,
 ) -> Dict[str, Any]:
     """Scrape multiple URLs sequentially, save records, and return aggregated stats."""
     global logger
     logger = setup_logging(module_name="dbSeeder", job_id=job_id, max_size=1)
+
+    set_debugging(enable_debugging)
 
     total_urls = len(urls)
     stats: Dict[str, Any] = {
@@ -1589,6 +1593,7 @@ def process_single_url_seeding(
                     skip_google_search=skip_google_search,
                     enable_person_search=enable_person_search,
                     enable_company_search=False,
+                    enable_debugging=enable_debugging,
                     sourcefile=sourcefile,
                 ),
             )

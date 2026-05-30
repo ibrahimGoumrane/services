@@ -3,8 +3,10 @@
 import re
 from urllib.parse import urlparse
 import requests
+import urllib3
 from api.services.utils.log_socket import get_seeding_logger
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = get_seeding_logger()
 
@@ -154,7 +156,10 @@ def validate_website_http(
 
     def _try_request(check_url: str) -> bool:
         try:
-            response = requests.get(check_url, timeout=timeout, allow_redirects=True, headers=_DEFAULT_HEADERS)
+            response = requests.get(
+                check_url, timeout=timeout, allow_redirects=True,
+                headers=_DEFAULT_HEADERS, verify=False,
+            )
 
             final_url = response.url or check_url
             if excluded_domains and is_excluded_domain(final_url, excluded_domains):
@@ -169,7 +174,7 @@ def validate_website_http(
             if not allow_pdf and content_type and 'text/html' not in content_type:
                 logger.warning(f"✗ Skipping non-HTML content: {final_url} ({content_type})")
                 return False
-            
+
             if response.status_code == 200:
                 if final_url != check_url:
                     logger.info(f"✓ Website accessible after redirect: {check_url} -> {final_url}")
@@ -178,15 +183,9 @@ def validate_website_http(
             else:
                 logger.warning(f"✗ Website returned status {response.status_code}: {check_url}")
                 return False
-        
-        except requests.exceptions.Timeout:
-            logger.warning(f"✗ Website timeout: {check_url}")
-            return False
-        except requests.exceptions.ConnectionError:
-            logger.warning(f"✗ Website connection error: {check_url}")
-            return False
-        except Exception as e:
-            logger.warning(f"✗ Website error: {check_url} - {e}")
+
+        except Exception as exc:
+            logger.warning(f"✗ Website connection error: {check_url} — {type(exc).__name__}: {exc}")
             return False
 
     if _try_request(url):

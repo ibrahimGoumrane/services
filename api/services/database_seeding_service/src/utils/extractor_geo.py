@@ -1,5 +1,4 @@
 """Geolocation extraction using locationtagger NER."""
-import logging
 import re
 from typing import Optional
 from collections import Counter

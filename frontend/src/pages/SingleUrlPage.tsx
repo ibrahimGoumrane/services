@@ -93,6 +93,7 @@ export function SingleUrlPage() {
         urls,
         enable_web_scraping: settings.enableWebScraping,
         skip_google_search: settings.skipGoogleSearch,
+        enable_debugging: settings.enableDebugging,
       });
       setJobId(newJobId);
       setStep(2);

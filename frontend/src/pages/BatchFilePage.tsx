@@ -86,7 +86,7 @@ export function BatchFilePage() {
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      const newJobId = await createJob(csvInput, mapping, separator, settings.batchSize, settings.enableWebScraping, settings.skipGoogleSearch, settings.enablePersonSearch, settings.enableCompanySearch);
+      const newJobId = await createJob(csvInput, mapping, separator, settings.batchSize, settings.enableWebScraping, settings.skipGoogleSearch, settings.enablePersonSearch, settings.enableCompanySearch, settings.enableDebugging);
       setJobId(newJobId);
       setStep(3);
       void refreshJobs();

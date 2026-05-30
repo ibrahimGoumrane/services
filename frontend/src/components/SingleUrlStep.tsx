@@ -16,6 +16,7 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
     skipGoogleSearch: false,
     enablePersonSearch: true,
     enableCompanySearch: true,
+    enableDebugging: false,
   });
 
   const parsedUrls = urlsText
@@ -99,6 +100,23 @@ export function SingleUrlStep({ onSubmit, isSubmitting }: SingleUrlStepProps) {
             />
             <span className="text-sm font-medium text-slate-300">
               Skip Google search fallback
+            </span>
+          </label>
+
+          <label className="flex items-center gap-3 rounded-xl border border-slate-700/60 bg-slate-900/40 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={settings.enableDebugging}
+              onChange={(event) =>
+                setSettings((previous) => ({
+                  ...previous,
+                  enableDebugging: event.target.checked,
+                }))
+              }
+              className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-amber-500"
+            />
+            <span className="text-sm font-medium text-slate-300">
+              Enable debug logging
             </span>
           </label>
         </div>

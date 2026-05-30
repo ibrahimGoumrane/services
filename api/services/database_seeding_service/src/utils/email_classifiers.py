@@ -1,7 +1,6 @@
 """Email classification utilities"""
 
 from typing import Tuple, Optional
-import logging
 from api.services.utils.log_socket import get_seeding_logger
 
 logger = get_seeding_logger()

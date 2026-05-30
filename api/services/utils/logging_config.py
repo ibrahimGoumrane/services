@@ -133,7 +133,7 @@ def setup_logging(
     """Set up and return a configured logger with file output."""
     os.makedirs(log_dir, exist_ok=True)
 
-    logger = logging.getLogger(module_name)
+    logger = get_seeding_logger(module_name)
     logger.setLevel(logging.DEBUG)
 
     if any(getattr(h, "_tag", "") == "file" for h in logger.handlers):
@@ -177,3 +177,31 @@ def detach_websocket_log_handler(
 def get_logger(module_name: str) -> logging.Logger:
     """Get or create a logger for a specific module."""
     return logging.getLogger(module_name)
+
+
+# ---------------------------------------------------------------------------
+# Debugging flag — controls whether seeding loggers emit any output
+# ---------------------------------------------------------------------------
+
+_DEBUG_ENABLED = False
+
+
+class DebugFilter(logging.Filter):
+    """Filter that blocks all log records when debugging is disabled."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return _DEBUG_ENABLED
+
+
+def set_debugging(enabled: bool) -> None:
+    """Enable or disable debugging output for all seeding loggers."""
+    global _DEBUG_ENABLED
+    _DEBUG_ENABLED = enabled
+
+
+def get_seeding_logger(module_name: str) -> logging.Logger:
+    """Get or create a logger that respects the global debugging flag."""
+    logger = logging.getLogger(module_name)
+    if not any(isinstance(f, DebugFilter) for f in logger.filters):
+        logger.addFilter(DebugFilter())
+    return logger

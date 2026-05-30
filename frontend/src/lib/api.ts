@@ -42,6 +42,7 @@ export async function createJob(
   skipGoogleSearch: boolean,
   enablePersonSearch: boolean,
   enableCompanySearch: boolean,
+  enableDebugging: boolean,
 ): Promise<string> {
   const formData = new FormData();
 
@@ -69,6 +70,7 @@ export async function createJob(
   formData.append("skip_google_search", skipGoogleSearch.toString());
   formData.append("enable_person_search", enablePersonSearch.toString());
   formData.append("enable_company_search", enableCompanySearch.toString());
+  formData.append("enable_debugging", enableDebugging.toString());
   if (Object.keys(defaultValues).length > 0) {
     formData.append("default_values", JSON.stringify(defaultValues));
   }

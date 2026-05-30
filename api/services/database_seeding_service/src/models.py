@@ -35,6 +35,9 @@ class ProcessingConfig(BaseModel):
     enable_company_search: bool = True
     """Enable web scraping + Google search for company contact info (default: True)"""
 
+    enable_debugging: bool = False
+    """Enable detailed debug-level logging (default: False, all logs suppressed)"""
+
     default_values: Optional[Dict[str, Any]] = None
     """Default values for null/empty fields"""
 

@@ -29,12 +29,14 @@ export interface JobSettings {
   skipGoogleSearch: boolean;
   enablePersonSearch: boolean;
   enableCompanySearch: boolean;
+  enableDebugging: boolean;
 }
 
 export interface UrlScrapeRequest {
   urls: string[];
   enable_web_scraping: boolean;
   skip_google_search: boolean;
+  enable_debugging: boolean;
 }
 
 export interface UrlScrapeResult {
