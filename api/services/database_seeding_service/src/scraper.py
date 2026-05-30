@@ -1545,6 +1545,15 @@ def process_single_url_seeding(
         "synthetic_emails_created": 0,
     }
 
+    start_idx = 1
+    if job_id:
+        existing_job = job_store.get_job(job_id)
+        if existing_job is not None and existing_job.current_row > 1:
+            start_idx = existing_job.current_row
+            for key in ("processed", "inserted", "updated", "skipped"):
+                stats[key] = int(existing_job.result.get(key, 0)) if existing_job.result else 0
+            logger.info(f"Loaded job progress for {job_id}: resume from URL {start_idx}")
+
     logger.info(
         "SEED_MULTI_URL_START "
         f"job_id={job_id or 'none'} "
@@ -1572,6 +1581,16 @@ def process_single_url_seeding(
         )
 
         for idx, url in enumerate(urls, start=1):
+            if idx < start_idx:
+                continue
+
+            if job_id and job_store.is_job_pause_requested(job_id):
+                logger.info(f"Job {job_id} pause requested, stopping at checkpoint URL {idx}")
+                job_store.update(job_id, "progress",
+                    {"current_row": idx, "total_rows": total_urls, "result": stats})
+                job_store.update(job_id, "status", "paused")
+                raise JobInterruptionRequested("pause")
+
             logger.info(f"Processing URL {idx}/{total_urls}: '{url}'")
 
             contact_tuples, row_stats = _process_contact_row(
@@ -1615,6 +1634,12 @@ def process_single_url_seeding(
             if contact_tuples[0][0] and "@" in str(contact_tuples[0][0]):
                 stats["emails_found"] += 1
 
+        return stats
+    except JobInterruptionRequested:
+        if not job_id:
+            raise
+        logger.info(f"Job {job_id} pause acknowledged during URL processing")
+        flush_buffered_log_handlers(logger)
         return stats
     finally:
         if validator:
