@@ -4,6 +4,7 @@ import json
 import os
 import time
 import uuid
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Set, Tuple , Literal
 from urllib.parse import urlparse
 from api.services.database_seeding_service.src.models import CsvRow, RowStats, PersonContactData, CompanyContactData, ScrapedWebData
@@ -773,12 +774,6 @@ def _enrich_company(
         company.email = f"{company_local}@{domain}"
         logger.info(f"Company synthetic fallback email: '{company.email}'")
 
-    # --- Extra emails → comment -------------------------------------------
-    main_email = company.email if company.email and "@" in company.email else None
-    extra_emails = [e for e in scraped.emails if e != main_email]
-    if extra_emails:
-        company.comment = ",".join(extra_emails)
-
     # --- E-mail classification -------------------------------------------
     is_generic, is_user_generic = email_classifiers.classify_email(
         company.email, generic_domains, generic_users, generic_mx, site_builder_domains
@@ -916,6 +911,11 @@ def _enrich_company_contact(
         enriched.append(company.to_tuple())
         logger.info(f"Company contact staged for '{website_company}'")
         company_linkedin = company.linkedin
+        main_email = company.email if company.email and "@" in company.email else None
+        for extra_email in merged_scraped_company.emails:
+            if extra_email != main_email and "@" in (extra_email or ""):
+                extra_company = replace(company, email=extra_email, comment=None)
+                enriched.append(extra_company.to_tuple())
 
     return enriched, company_linkedin
 
@@ -1016,15 +1016,14 @@ def _process_contact_row(
     validator: WebsiteEmailValidator,
     config: ProcessingConfig,
     company_cache: Optional[Dict[str, str]] = None,
-) -> Tuple[Optional[Tuple], RowStats, List[Tuple]]:
+) -> Tuple[List[Tuple], RowStats]:
     """
     Process one CSV row and return:
-      - a DB tuple for the *person* contact (or None to skip)
+      - a list of one or more DB tuples for all contacts (person + extra emails + company)
       - row-level stats
-      - zero or more extra DB tuples for associated *company* contacts
     """
     row_stats = RowStats()
-    extra_contacts: List[Tuple] = []
+    all_contacts: List[Tuple] = []
 
     # ------------------------------------------------------------------
     # 1. Extract every CSV value up-front (defaults applied here only)
@@ -1036,7 +1035,7 @@ def _process_contact_row(
     # ------------------------------------------------------------------
     if not (csv.fullname or csv.fname or csv.lname or csv.name or csv.email or csv.website):
         logger.info("Skipped: row has none of fullname/fname/lname/name/email/url")
-        return None, row_stats, extra_contacts
+        return all_contacts, row_stats
 
     # ------------------------------------------------------------------
     # 3. Sanitize fields
@@ -1090,11 +1089,6 @@ def _process_contact_row(
             row_stats=row_stats,
             local_panel=person_local_panel,
         )
-        # Store extra scraped emails in comment
-        main_email = person.email if person.email and "@" in person.email else None
-        extra_emails = [e for e in person_scraped.emails if e != main_email]
-        if extra_emails:
-            person.comment = ",".join(extra_emails)
     else:
         # Person without web enrichment (still runs MX/classification/synthetic email)
         person = _enrich_person(
@@ -1131,9 +1125,23 @@ def _process_contact_row(
 
         if company_linkedin and not person.linkedin:
             person.linkedin = company_linkedin
-        extra_contacts.extend(company_tuples)
 
-    return person.to_tuple(), row_stats, extra_contacts
+    # --- Main person contact (linkedin already backfilled) ---------------
+    all_contacts.append(person.to_tuple())
+
+    # --- Extra person emails as separate rows -----------------------------
+    if person_search_enabled:
+        main_email = person.email if person.email and "@" in person.email else None
+        for extra_email in person_scraped.emails:
+            if extra_email != main_email and "@" in (extra_email or ""):
+                extra_person = replace(person, email=extra_email, comment=None)
+                all_contacts.append(extra_person.to_tuple())
+
+    # --- Company contacts -------------------------------------------------
+    if config.enable_company_search and config.enable_web_scraping:
+        all_contacts.extend(company_tuples)
+
+    return all_contacts, row_stats
 
 
 # ---------------------------------------------------------------------------
@@ -1329,7 +1337,7 @@ def process_database_seeding(
                 logger.info("Processing synthetic warmup row...")
 
             try:
-                contact_data, row_stats, extra_contacts = _process_contact_row(
+                contact_tuples, row_stats = _process_contact_row(
                     row=row,
                     generic_domains=generic_domains,
                     generic_users=generic_users,
@@ -1351,18 +1359,15 @@ def process_database_seeding(
 
                 _merge_row_stats(stats, row_stats)
 
-                if extra_contacts:
-                    contact_batch.extend(extra_contacts)
-
-                if contact_data is not None:
-                    contact_batch.append(contact_data)
+                if contact_tuples:
+                    contact_batch.extend(contact_tuples)
 
                     original_email = data_transformers.get_mapped_value(row, config.csv_mapping.get("email"))
                     original_website = data_transformers.get_mapped_value(row, config.csv_mapping.get("url"))
 
-                    if not original_email and contact_data[0] and "@" in contact_data[0]:
+                    if not original_email and contact_tuples[0][0] and "@" in contact_tuples[0][0]:
                         stats["emails_found"] += 1
-                    if not original_website and contact_data[4]:
+                    if not original_website and contact_tuples[0][4]:
                         stats["websites_found"] += 1
                 else:
                     stats["mx_failed"] += 1
@@ -1565,7 +1570,7 @@ def process_single_url_seeding(
         for idx, url in enumerate(urls, start=1):
             logger.info(f"Processing URL {idx}/{total_urls}: '{url}'")
 
-            contact_data, row_stats, extra_contacts = _process_contact_row(
+            contact_tuples, row_stats = _process_contact_row(
                 row={"url": (url or "").strip()},
                 generic_domains=generic_domains,
                 generic_users=generic_users,
@@ -1591,21 +1596,18 @@ def process_single_url_seeding(
             stats["processed"] += 1
             _merge_row_stats(stats, row_stats)
 
-            if contact_data is None:
+            if not contact_tuples:
                 stats["skipped"] += 1
                 stats["mx_failed"] += 1
                 stats["rows_skipped_no_email_found"] += 1
                 continue
 
-            if extra_contacts:
-                inserted, updated = contact_repository.batch_create_contacts([*extra_contacts, contact_data])
-            else:
-                inserted, updated = contact_repository.batch_create_contacts([contact_data])
+            inserted, updated = contact_repository.batch_create_contacts(contact_tuples)
 
             stats["inserted"] += inserted
             stats["updated"] += updated
 
-            if contact_data[0] and "@" in str(contact_data[0]):
+            if contact_tuples[0][0] and "@" in str(contact_tuples[0][0]):
                 stats["emails_found"] += 1
 
         return stats
